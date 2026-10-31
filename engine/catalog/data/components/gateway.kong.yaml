@@ -1,0 +1,31 @@
+id: gateway.kong
+archetype: gateway
+displayName: Kong Gateway
+version: "3.x"
+params:
+  instances:
+    default: 1
+    source: { kind: default-estimate }
+  vcpu:
+    default: 2
+    description: "vCPU per instance (Kong runs one worker per vCPU)"
+    source: { kind: default-estimate }
+  plugins:
+    default: []
+    options: [rate-limiting, key-auth, jwt, basic-auth, cors]
+    description: "Enabled plugins; each multiplies throughput by its pluginMultipliers entry"
+    source: { kind: default-estimate }
+  rpsPerVcpu:
+    default: 9000
+    source: { kind: vendor-benchmark, url: "https://developer.konghq.com/gateway/performance/benchmarks/", note: "Kong 3.16 on c5.4xlarge: ~144k RPS / 16 vCPU without plugins (p99 4.5 ms)" }
+  pluginMultipliers:
+    default: { rate-limiting: 0.83, key-auth: 0.85, jwt: 0.80, basic-auth: 0.80, cors: 0.97 }
+    description: "Throughput multiplier per plugin"
+    source: { kind: default-estimate, url: "https://developer.konghq.com/gateway/performance/benchmarks/", note: "rate-limiting x key-auth ~0.71 matches benchmark 102k/144k RPS; others estimated" }
+  serviceCs2:
+    default: 0.5
+    source: { kind: default-estimate }
+  delayMs:
+    default: 0
+    description: "Fixed non-CPU latency added per request"
+    source: { kind: default-estimate }

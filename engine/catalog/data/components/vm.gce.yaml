@@ -1,0 +1,12 @@
+id: vm.gce
+archetype: runtime_host
+displayName: GCE (Managed Instance Group)
+params:
+  instanceType: { default: e2-standard-2, optionsFrom: instances, source: { kind: default-estimate } }
+  count: { default: 2, description: "Instances when no autoscaling block is configured", source: { kind: default-estimate } }
+  autoscaling.min: { default: 1, source: { kind: default-estimate } }
+  autoscaling.max: { default: 10, source: { kind: default-estimate } }
+  autoscaling.targetCPU: { default: 50, description: "Target tracking on average CPU %", source: { kind: default-estimate } }
+  autoscaling.bootS: { default: 90, unit: s, description: "Launch to serving traffic: boot, app start, health check", source: { kind: default-estimate } }
+  autoscaling.evaluationS: { default: 60, unit: s, description: "How often the autoscaler acts on the averaged CPU metric", source: { kind: default-estimate } }
+  autoscaling.scaleInCooldownS: { default: 600, unit: s, description: "Scale-in uses the highest recommendation of this window", source: { kind: vendor-docs, url: "https://cloud.google.com/compute/docs/autoscaler/understanding-autoscaler-decisions", note: "Scale-in stabilization uses the peak load of the last 10 minutes" } }

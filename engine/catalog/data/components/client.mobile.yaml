@@ -1,0 +1,4 @@
+id: client.mobile
+archetype: client
+displayName: Mobile users
+params: {}

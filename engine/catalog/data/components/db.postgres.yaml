@@ -1,0 +1,27 @@
+id: db.postgres
+archetype: datastore
+displayName: PostgreSQL
+params:
+  protocol: { default: pg-wire, optionsFrom: protocols, description: "Default protocol of edges into this node", source: { kind: vendor-docs } }
+  instanceType: { default: db.r6g.large, optionsFrom: instances, source: { kind: default-estimate } }
+  maxConnections:
+    default: 100
+    source: { kind: vendor-docs, url: "https://www.postgresql.org/docs/current/runtime-config-connection.html", note: "max_connections default 100 (managed services derive it from memory)" }
+  readReplicas: { default: 0, source: { kind: default-estimate } }
+  readsTo:
+    default: replicas
+    options: [replicas, primary]
+    description: "Where read/complex operations go when read replicas exist"
+    source: { kind: default-estimate }
+  opCostMs:
+    default: { read: 0.2, write: 0.6, complex: 5 }
+    description: "Database CPU time per operation (indexed point read, single-row write, join/aggregate); assumes working set in memory"
+    source: { kind: default-estimate }
+  commitLatencyMs:
+    default: 1.0
+    description: "Non-CPU latency per write (WAL flush / group commit)"
+    source: { kind: default-estimate }
+  serviceCs2:
+    default: 1.5
+    description: "Query time variability"
+    source: { kind: default-estimate }

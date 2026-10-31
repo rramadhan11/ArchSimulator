@@ -1,0 +1,26 @@
+# Instance shapes. Only vCPU and memory matter to the engine.
+source: { kind: vendor-docs, url: "https://aws.amazon.com/ec2/instance-types/", note: "Published instance specs (AWS EC2/RDS/ElastiCache, GCE)" }
+instances:
+  c6i.large:      { vcpu: 2,  memoryGiB: 4 }
+  c6i.xlarge:     { vcpu: 4,  memoryGiB: 8 }
+  c6i.2xlarge:    { vcpu: 8,  memoryGiB: 16 }
+  c6i.4xlarge:    { vcpu: 16, memoryGiB: 32 }
+  m6i.large:      { vcpu: 2,  memoryGiB: 8 }
+  m6i.xlarge:     { vcpu: 4,  memoryGiB: 16 }
+  m6i.2xlarge:    { vcpu: 8,  memoryGiB: 32 }
+  r6i.large:      { vcpu: 2,  memoryGiB: 16 }
+  r6i.xlarge:     { vcpu: 4,  memoryGiB: 32 }
+  db.m6g.large:   { vcpu: 2,  memoryGiB: 8 }
+  db.m6g.xlarge:  { vcpu: 4,  memoryGiB: 16 }
+  db.r6g.large:   { vcpu: 2,  memoryGiB: 16 }
+  db.r6g.xlarge:  { vcpu: 4,  memoryGiB: 32 }
+  db.r6g.2xlarge: { vcpu: 8,  memoryGiB: 64 }
+  cache.r6g.large:  { vcpu: 2, memoryGiB: 13.07 }
+  cache.r6g.xlarge: { vcpu: 4, memoryGiB: 26.32 }
+  e2-standard-2:  { vcpu: 2,  memoryGiB: 8 }
+  e2-standard-4:  { vcpu: 4,  memoryGiB: 16 }
+  n2-standard-4:  { vcpu: 4,  memoryGiB: 16 }
+  n2-standard-8:  { vcpu: 8,  memoryGiB: 32 }
+  generic-2c4g:   { vcpu: 2,  memoryGiB: 4 }
+  generic-4c8g:   { vcpu: 4,  memoryGiB: 8 }
+  generic-8c16g:  { vcpu: 8,  memoryGiB: 16 }

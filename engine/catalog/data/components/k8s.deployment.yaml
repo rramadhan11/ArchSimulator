@@ -1,0 +1,17 @@
+id: k8s.deployment
+archetype: orchestrator
+displayName: Kubernetes Deployment
+params:
+  replicas: { default: 2, description: "Used when no hpa block is configured", source: { kind: default-estimate } }
+  requests.cpu: { default: "500m", source: { kind: default-estimate } }
+  requests.memory: { default: "512Mi", source: { kind: default-estimate } }
+  limits.cpu: { default: "", description: "Empty = no CPU limit; capacity then assumes the pod uses its request", source: { kind: default-estimate } }
+  hpa.min: { default: 1, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/", note: "minReplicas defaults to 1" } }
+  hpa.max: { default: 10, source: { kind: default-estimate } }
+  hpa.targetCPU: { default: 80, description: "Target average CPU utilization (% of requests)", source: { kind: vendor-docs, url: "https://kubernetes.io/docs/reference/kubectl/generated/kubectl_autoscale/", note: "kubectl autoscale default --cpu-percent" } }
+  podStartupS: { default: 20, unit: s, description: "Scheduled to Ready: image pull (cached), container start, readiness probe", source: { kind: default-estimate } }
+  hpa.syncPeriodS: { default: 15, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/", note: "--horizontal-pod-autoscaler-sync-period defaults to 15s" } }
+  hpa.tolerance: { default: 0.1, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/", note: "No scaling while the usage ratio is within 10% of 1.0" } }
+  hpa.scaleDownStabilizationS: { default: 300, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/#default-behavior", note: "Scale-down uses the highest recommendation of the last 300s" } }
+  hpa.scaleUpPercent: { default: 100, unit: "%", source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/#default-behavior", note: "Default scale-up policy: 100% or 4 pods per 15s, whichever is larger" } }
+  hpa.scaleUpPods: { default: 4, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/#default-behavior", note: "Default scale-up policy: 100% or 4 pods per 15s, whichever is larger" } }

@@ -1,0 +1,7 @@
+id: mq.sqs
+archetype: queue_stream
+displayName: AWS SQS (standard)
+params:
+  protocol: { default: http1.1+json, optionsFrom: protocols, source: { kind: vendor-docs } }
+  managed: { default: true, description: "Standard queues support a nearly unlimited API rate", source: { kind: vendor-docs, url: "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html" } }
+  publishLatencyMs: { default: 15, description: "SendMessage latency", source: { kind: default-estimate } }

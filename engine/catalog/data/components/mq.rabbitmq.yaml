@@ -1,0 +1,10 @@
+id: mq.rabbitmq
+archetype: queue_stream
+displayName: RabbitMQ
+params:
+  protocol: { default: amqp, optionsFrom: protocols, source: { kind: vendor-docs } }
+  managed: { default: false, source: { kind: default-estimate } }
+  partitions: { default: 1, description: "Queues; each classic/quorum queue is served by a single process", source: { kind: vendor-docs, url: "https://www.rabbitmq.com/docs/queues" } }
+  msgsPerSecPerPartition: { default: 20000, source: { kind: default-estimate } }
+  publishLatencyMs: { default: 1, description: "Publish with confirms", source: { kind: default-estimate } }
+  serviceCs2: { default: 0.5, source: { kind: default-estimate } }

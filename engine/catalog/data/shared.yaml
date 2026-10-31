@@ -1,0 +1,87 @@
+# Shared catalog data: compute profiles, network classes, protocols.
+# Every number carries a source; "default-estimate" means "our rough guess,
+# replace with your own measurement".
+version: "2026.10"
+
+profiles:
+  crud-light:
+    cpuMsPerReq: 2
+    ioWaitMs: 0
+    source: { kind: default-estimate, note: "Simple CRUD handler: routing, validation, (de)serialization; downstream calls modeled as edges" }
+  io-bound:
+    cpuMsPerReq: 1
+    ioWaitMs: 20
+    source: { kind: default-estimate, note: "Mostly waiting on unmodeled IO (files, sidecars); downstream calls modeled as edges" }
+  cpu-heavy:
+    cpuMsPerReq: 25
+    ioWaitMs: 0
+    source: { kind: default-estimate, note: "Rendering, crypto, image/JSON transformation heavy handlers" }
+
+networkClasses:
+  same-host:
+    rttMs: 0.05
+    bandwidthMbps: 20000
+    source: { kind: default-estimate, note: "Loopback / same-node pod-to-pod" }
+  same-az:
+    rttMs: 0.3
+    bandwidthMbps: 5000
+    source: { kind: default-estimate, note: "Typical intra-AZ RTT in AWS/GCP" }
+  cross-az:
+    rttMs: 1.0
+    bandwidthMbps: 5000
+    source: { kind: default-estimate, note: "Typical inter-AZ RTT within one region" }
+  cross-region:
+    rttMs: 60
+    bandwidthMbps: 1000
+    source: { kind: default-estimate, note: "Depends heavily on region pair" }
+  internet:
+    rttMs: 40
+    bandwidthMbps: 50
+    source: { kind: default-estimate, note: "Average end-user RTT and per-connection throughput" }
+
+protocols:
+  http1.1+json:
+    serializeMsPerKB: 0.01
+    multiplexed: false
+    defaultPoolSize: 0
+    source: { kind: default-estimate, note: "JSON encode+decode ~100 MB/s per core; one request per connection" }
+  http2+json:
+    serializeMsPerKB: 0.01
+    multiplexed: true
+    defaultPoolSize: 0
+    source: { kind: default-estimate, note: "JSON cost as HTTP/1.1; streams multiplexed on one connection" }
+  grpc+protobuf:
+    serializeMsPerKB: 0.003
+    multiplexed: true
+    defaultPoolSize: 0
+    source: { kind: default-estimate, note: "Protobuf roughly 3x cheaper than JSON per KB" }
+  websocket:
+    serializeMsPerKB: 0.01
+    multiplexed: true
+    defaultPoolSize: 0
+    source: { kind: default-estimate, note: "Long-lived connection, JSON frames" }
+  pg-wire:
+    serializeMsPerKB: 0
+    multiplexed: false
+    defaultPoolSize: 10
+    source: { kind: vendor-docs, url: "https://github.com/brettwooldridge/HikariCP#gear-configuration-knobs-baby", note: "Pool size 10 per replica = HikariCP default maximumPoolSize; driver cost folded into query cost" }
+  mysql-wire:
+    serializeMsPerKB: 0
+    multiplexed: false
+    defaultPoolSize: 10
+    source: { kind: vendor-docs, url: "https://github.com/brettwooldridge/HikariCP#gear-configuration-knobs-baby", note: "Pool size 10 per replica = HikariCP default maximumPoolSize" }
+  resp:
+    serializeMsPerKB: 0
+    multiplexed: true
+    defaultPoolSize: 0
+    source: { kind: default-estimate, note: "Redis protocol; client pools rarely the limit, cost folded into op cost" }
+  kafka:
+    serializeMsPerKB: 0.003
+    multiplexed: true
+    defaultPoolSize: 0
+    source: { kind: default-estimate, note: "Batched binary protocol" }
+  amqp:
+    serializeMsPerKB: 0.005
+    multiplexed: true
+    defaultPoolSize: 0
+    source: { kind: default-estimate, note: "Channels multiplexed on one connection" }

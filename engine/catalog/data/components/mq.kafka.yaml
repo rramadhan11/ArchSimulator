@@ -1,0 +1,13 @@
+id: mq.kafka
+archetype: queue_stream
+displayName: Apache Kafka (topic)
+params:
+  protocol: { default: kafka, optionsFrom: protocols, source: { kind: vendor-docs } }
+  managed: { default: false, source: { kind: default-estimate } }
+  partitions: { default: 6, description: "Partitions of the topic; also caps consumer parallelism per group", source: { kind: default-estimate } }
+  msgsPerSecPerPartition:
+    default: 10000
+    description: "Sustained produce throughput per partition (~10 MB/s at 1 KB messages)"
+    source: { kind: default-estimate }
+  publishLatencyMs: { default: 3, description: "Produce latency with acks=all", source: { kind: default-estimate } }
+  serviceCs2: { default: 0.5, source: { kind: default-estimate } }

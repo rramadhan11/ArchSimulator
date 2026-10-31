@@ -1,0 +1,4 @@
+id: client.web
+archetype: client
+displayName: Web users
+params: {}

@@ -1,0 +1,4 @@
+id: client.partner
+archetype: client
+displayName: Partner API client
+params: {}

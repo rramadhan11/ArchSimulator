@@ -1,0 +1,9 @@
+id: k8s.nodepool
+archetype: node_pool
+displayName: Kubernetes Node Pool
+params:
+  instanceType: { default: c6i.xlarge, optionsFrom: instances, source: { kind: default-estimate } }
+  min: { default: 2, source: { kind: default-estimate } }
+  max: { default: 10, source: { kind: default-estimate } }
+  clusterAutoscaler: { default: true, description: "When false the pool stays at min nodes", source: { kind: default-estimate } }
+  provisionS: { default: 90, unit: s, description: "Pending pod to new node Ready: autoscaler scan, VM boot, kubelet registration", source: { kind: default-estimate } }

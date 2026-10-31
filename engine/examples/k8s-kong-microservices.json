@@ -1,0 +1,36 @@
+{
+  "version": "0.1",
+  "catalogVersion": "2026.10",
+  "nodes": [
+    { "id": "users", "kind": "client.mobile" },
+    { "id": "kong", "kind": "gateway.kong", "config": { "instances": 2, "vcpu": 4, "plugins": ["rate-limiting", "key-auth"] } },
+    { "id": "pool-a", "kind": "k8s.nodepool", "config": { "instanceType": "c6i.xlarge", "min": 3, "max": 12, "clusterAutoscaler": true } },
+    { "id": "orders-deploy", "kind": "k8s.deployment", "parent": "pool-a",
+      "config": { "requests": { "cpu": "500m", "memory": "512Mi" }, "limits": { "cpu": "1" },
+                  "hpa": { "min": 3, "max": 20, "targetCPU": 70 } } },
+    { "id": "orders", "kind": "service.go", "parent": "orders-deploy", "config": { "cpuMsPerReq": 3 } },
+    { "id": "payments-deploy", "kind": "k8s.deployment", "parent": "pool-a",
+      "config": { "requests": { "cpu": "1", "memory": "1Gi" }, "hpa": { "min": 2, "max": 8, "targetCPU": 70 } } },
+    { "id": "payments", "kind": "service.java", "parent": "payments-deploy", "config": { "cpuMsPerReq": 6 } },
+    { "id": "redis", "kind": "cache.redis", "config": { "hitRatio": 0.85 } },
+    { "id": "pg", "kind": "db.postgres", "config": { "instanceType": "db.r6g.xlarge", "maxConnections": 400, "readReplicas": 1 } },
+    { "id": "psp", "kind": "ext.api", "name": "Payment gateway", "config": { "latencyMs": 250, "rateLimitRps": 1000 } }
+  ],
+  "edges": [
+    { "from": "users", "to": "kong" },
+    { "from": "kong", "to": "orders", "timeoutMs": 2000 },
+    { "from": "orders", "to": "redis", "classes": ["read"] },
+    { "from": "orders", "to": "pg", "op": "read", "classes": ["read"], "when": "cache_miss:redis",
+      "retry": { "max": 2, "backoffMs": 50 } },
+    { "from": "orders", "to": "pg", "op": "write", "classes": ["checkout"] },
+    { "from": "orders", "to": "payments", "protocol": "grpc+protobuf", "classes": ["checkout"], "timeoutMs": 3000 },
+    { "from": "payments", "to": "psp", "networkClass": "internet", "timeoutMs": 2500 },
+    { "from": "payments", "to": "pg", "op": "write" }
+  ],
+  "workload": {
+    "entry": "users",
+    "targetTps": 5000,
+    "classes": [ { "name": "read", "weight": 85 }, { "name": "checkout", "weight": 15 } ],
+    "slo": { "p99Ms": 800, "errorRate": 0.001 }
+  }
+}

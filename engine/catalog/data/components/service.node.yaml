@@ -1,0 +1,41 @@
+id: service.node
+archetype: compute_service
+displayName: Node.js service
+params:
+  profile:
+    default: crud-light
+    optionsFrom: profiles
+    description: "Preset for cpuMsPerReq / ioWaitMs when not set"
+    source: { kind: default-estimate }
+  runtimeMultiplier:
+    default: 1.5
+    description: "CPU cost relative to Go for the same handler (small factor, not the main driver)"
+    source: { kind: default-estimate, url: "https://www.techempower.com/benchmarks/", note: "Rough ratio from public framework benchmarks; varies by framework" }
+  serviceCs2:
+    default: 1.0
+    description: "Squared coefficient of variation of CPU time per request (1 = exponential)"
+    source: { kind: default-estimate }
+  workersPerReplica:
+    default: 1
+    description: "Threads that can execute CPU work concurrently per replica (0 = one per core)"
+    source: { kind: vendor-docs, url: "https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop", note: "Single event-loop thread per process" }
+  maxConcurrencyPerReplica:
+    default: 0
+    description: "In-flight requests a replica accepts, including those waiting on downstream calls (0 = unlimited)"
+    source: { kind: default-estimate }
+  usl.sigma:
+    default: 0
+    description: "Universal Scalability Law contention coefficient across cores of one replica"
+    source: { kind: default-estimate, url: "http://www.perfdynamics.com/Manifesto/USLscalability.html" }
+  usl.kappa:
+    default: 0
+    description: "Universal Scalability Law coherency coefficient across cores of one replica"
+    source: { kind: default-estimate, url: "http://www.perfdynamics.com/Manifesto/USLscalability.html" }
+  replicas:
+    default: 1
+    description: "Replicas when the service is not placed in a Deployment or VM group"
+    source: { kind: default-estimate }
+  vcpu:
+    default: 1
+    description: "vCPU per replica when the service is not placed in a Deployment or VM group"
+    source: { kind: default-estimate }

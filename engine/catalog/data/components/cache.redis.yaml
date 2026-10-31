@@ -1,0 +1,12 @@
+id: cache.redis
+archetype: cache
+displayName: Redis
+params:
+  protocol: { default: resp, optionsFrom: protocols, source: { kind: vendor-docs } }
+  nodes: { default: 1, description: "Shards (cluster primaries)", source: { kind: default-estimate } }
+  threadsPerNode: { default: 1, description: "Command execution is single-threaded", source: { kind: vendor-docs, url: "https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/benchmarks/" } }
+  opsPerSecPerThread:
+    default: 100000
+    source: { kind: vendor-benchmark, url: "https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/benchmarks/", note: "Simple GET/SET without pipelining, order of 100k ops/s per core" }
+  hitRatio: { default: 0.8, source: { kind: default-estimate } }
+  serviceCs2: { default: 0.5, source: { kind: default-estimate } }

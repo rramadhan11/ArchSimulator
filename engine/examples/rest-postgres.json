@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "catalogVersion": "2026.10",
+  "nodes": [
+    { "id": "users", "kind": "client.web", "name": "Web users" },
+    { "id": "alb", "kind": "lb.alb" },
+    { "id": "api-asg", "kind": "vm.ec2", "config": { "instanceType": "c6i.large", "autoscaling": { "min": 2, "max": 6, "targetCPU": 50 } } },
+    { "id": "api", "kind": "service.go", "parent": "api-asg",
+      "config": { "classes": { "read": { "cpuMsPerReq": 2 }, "write": { "cpuMsPerReq": 4 } } } },
+    { "id": "pg", "kind": "db.postgres", "config": { "instanceType": "db.r6g.large", "maxConnections": 200 } }
+  ],
+  "edges": [
+    { "from": "users", "to": "alb" },
+    { "from": "alb", "to": "api" },
+    { "from": "api", "to": "pg", "op": "read", "classes": ["read"], "callsPerRequest": 2 },
+    { "from": "api", "to": "pg", "op": "read", "classes": ["write"] },
+    { "from": "api", "to": "pg", "op": "write", "classes": ["write"] }
+  ],
+  "workload": {
+    "entry": "users",
+    "targetTps": 1500,
+    "classes": [ { "name": "read", "weight": 80 }, { "name": "write", "weight": 20 } ],
+    "slo": { "p99Ms": 300, "errorRate": 0.001 }
+  }
+}

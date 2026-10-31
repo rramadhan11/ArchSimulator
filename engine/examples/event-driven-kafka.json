@@ -1,0 +1,29 @@
+{
+  "version": "0.1",
+  "catalogVersion": "2026.10",
+  "nodes": [
+    { "id": "devices", "kind": "client.partner", "name": "IoT devices" },
+    { "id": "alb", "kind": "lb.alb" },
+    { "id": "pool", "kind": "k8s.nodepool", "config": { "instanceType": "m6i.xlarge", "min": 2, "max": 10 } },
+    { "id": "ingest-deploy", "kind": "k8s.deployment", "parent": "pool",
+      "config": { "requests": { "cpu": "500m", "memory": "256Mi" }, "hpa": { "min": 2, "max": 10, "targetCPU": 70 } } },
+    { "id": "ingest", "kind": "service.go", "parent": "ingest-deploy" },
+    { "id": "events", "kind": "mq.kafka", "config": { "partitions": 12 } },
+    { "id": "worker-deploy", "kind": "k8s.deployment", "parent": "pool",
+      "config": { "requests": { "cpu": "1", "memory": "1Gi" }, "hpa": { "min": 4, "max": 16, "targetCPU": 70 } } },
+    { "id": "worker", "kind": "service.python", "parent": "worker-deploy", "config": { "cpuMsPerReq": 1.5 } },
+    { "id": "pg", "kind": "db.postgres", "config": { "instanceType": "db.r6g.xlarge", "maxConnections": 300 } }
+  ],
+  "edges": [
+    { "from": "devices", "to": "alb", "payloadReqKB": 2 },
+    { "from": "alb", "to": "ingest", "payloadReqKB": 2 },
+    { "from": "ingest", "to": "events", "payloadReqKB": 2 },
+    { "from": "events", "to": "worker", "payloadReqKB": 2 },
+    { "from": "worker", "to": "pg", "op": "write", "poolSize": 5 }
+  ],
+  "workload": {
+    "entry": "devices",
+    "targetTps": 3000,
+    "slo": { "p99Ms": 200 }
+  }
+}

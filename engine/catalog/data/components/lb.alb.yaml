@@ -1,0 +1,12 @@
+id: lb.alb
+archetype: edge_proxy
+displayName: AWS Application Load Balancer
+params:
+  managed:
+    default: true
+    description: "Managed LB: capacity scales automatically (pre-warm for sudden large spikes)"
+    source: { kind: vendor-docs, url: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html" }
+  delayMs:
+    default: 1
+    description: "Added latency per request"
+    source: { kind: default-estimate }

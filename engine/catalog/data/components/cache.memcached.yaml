@@ -1,0 +1,10 @@
+id: cache.memcached
+archetype: cache
+displayName: Memcached
+params:
+  protocol: { default: resp, optionsFrom: protocols, source: { kind: default-estimate, note: "Text/binary protocol; cost folded into op cost" } }
+  nodes: { default: 1, source: { kind: default-estimate } }
+  threadsPerNode: { default: 4, description: "memcached -t default 4", source: { kind: vendor-docs, url: "https://github.com/memcached/memcached/wiki/ConfiguringServer" } }
+  opsPerSecPerThread: { default: 80000, source: { kind: default-estimate } }
+  hitRatio: { default: 0.8, source: { kind: default-estimate } }
+  serviceCs2: { default: 0.5, source: { kind: default-estimate } }

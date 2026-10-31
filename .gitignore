@@ -1,0 +1,7 @@
+.env
+/bin/
+apps/web/dist/
+node_modules/
+*.test
+apps/web/public/engine.wasm
+apps/web/src/engine/wasm_exec.js

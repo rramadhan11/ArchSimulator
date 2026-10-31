@@ -1,0 +1,10 @@
+id: lb.nginx
+archetype: edge_proxy
+displayName: Nginx (reverse proxy)
+params:
+  managed: { default: false, source: { kind: default-estimate } }
+  instances: { default: 1, source: { kind: default-estimate } }
+  vcpu: { default: 2, description: "vCPU per instance (one worker per core)", source: { kind: default-estimate } }
+  rpsPerVcpu: { default: 12000, description: "Proxied small HTTP requests per core with keep-alive upstreams", source: { kind: default-estimate } }
+  serviceCs2: { default: 0.5, source: { kind: default-estimate } }
+  delayMs: { default: 0, source: { kind: default-estimate } }

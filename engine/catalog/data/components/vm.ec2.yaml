@@ -1,0 +1,12 @@
+id: vm.ec2
+archetype: runtime_host
+displayName: AWS EC2 (Auto Scaling Group)
+params:
+  instanceType: { default: c6i.large, optionsFrom: instances, source: { kind: default-estimate } }
+  count: { default: 2, description: "Instances when no autoscaling block is configured", source: { kind: default-estimate } }
+  autoscaling.min: { default: 1, source: { kind: default-estimate } }
+  autoscaling.max: { default: 10, source: { kind: default-estimate } }
+  autoscaling.targetCPU: { default: 50, description: "Target tracking on average CPU %", source: { kind: default-estimate } }
+  autoscaling.bootS: { default: 90, unit: s, description: "Launch to serving traffic: boot, app start, health check", source: { kind: default-estimate } }
+  autoscaling.evaluationS: { default: 60, unit: s, description: "How often the autoscaler acts on the averaged CPU metric", source: { kind: default-estimate, note: "Target tracking acts on 1-minute metrics" } }
+  autoscaling.scaleInCooldownS: { default: 300, unit: s, description: "Scale-in uses the highest recommendation of this window", source: { kind: default-estimate, note: "Matches the common 300s cooldown" } }

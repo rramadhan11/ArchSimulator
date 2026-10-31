@@ -1,0 +1,7 @@
+id: ext.api
+archetype: external
+displayName: External API
+params:
+  latencyMs: { default: 150, description: "Mean response time of the third party", source: { kind: default-estimate } }
+  latencyCs2: { default: 0.5, source: { kind: default-estimate } }
+  rateLimitRps: { default: 0, description: "Requests per second allowed (0 = unlimited)", source: { kind: default-estimate } }

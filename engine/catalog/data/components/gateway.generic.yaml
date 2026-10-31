@@ -1,0 +1,11 @@
+id: gateway.generic
+archetype: gateway
+displayName: Generic API Gateway
+params:
+  instances: { default: 1, source: { kind: default-estimate } }
+  vcpu: { default: 2, source: { kind: default-estimate } }
+  plugins: { default: [], source: { kind: default-estimate } }
+  rpsPerVcpu: { default: 5000, source: { kind: default-estimate } }
+  pluginMultipliers: { default: {}, source: { kind: default-estimate } }
+  serviceCs2: { default: 0.5, source: { kind: default-estimate } }
+  delayMs: { default: 0, source: { kind: default-estimate } }
