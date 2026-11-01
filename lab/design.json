@@ -1,0 +1,24 @@
+{
+  "version": "0.1",
+  "catalogVersion": "2026.10",
+  "nodes": [
+    { "id": "k6", "kind": "client.web" },
+    { "id": "work-deploy", "kind": "k8s.deployment",
+      "config": { "requests": { "cpu": "250m", "memory": "32Mi" }, "limits": { "cpu": "250m" },
+                  "hpa": { "min": 1, "max": 6, "targetCPU": 70 }, "podStartupS": 5 } },
+    { "id": "work", "kind": "service.generic", "parent": "work-deploy",
+      "config": { "cpuMsPerReq": 4, "ioWaitMs": 0, "serviceCs2": 0 } }
+  ],
+  "edges": [
+    { "from": "k6", "to": "work", "networkClass": "same-host", "payloadReqKB": 0, "payloadRespKB": 0, "timeoutMs": 2000 }
+  ],
+  "workload": {
+    "entry": "k6",
+    "targetTps": 30,
+    "slo": { "p99Ms": 250, "errorRate": 0.001 },
+    "timeline": {
+      "durationS": 480,
+      "load": { "kind": "spike", "peakTps": 120, "startS": 60, "rampS": 30, "holdS": 240 }
+    }
+  }
+}

@@ -172,7 +172,9 @@ export function Select<T extends string>({
 
 export function Toggle({ id, checked, onChange, label }: { id?: string; checked: boolean; onChange: (v: boolean) => void; label?: ReactNode }) {
   return (
-    <label className="inline-flex cursor-pointer items-center gap-2 text-[12px]">
+    // relative: the visually hidden checkbox is absolutely positioned; without a
+    // positioned ancestor it escapes the scrolling panel and makes the page scroll.
+    <label className="relative inline-flex cursor-pointer items-center gap-2 text-[12px]">
       <input id={id} type="checkbox" className="peer sr-only" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       <span className="relative h-4 w-7 rounded-full bg-line-strong transition-colors peer-checked:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent/30 after:absolute after:top-0.5 after:left-0.5 after:h-3 after:w-3 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-3" />
       {label}

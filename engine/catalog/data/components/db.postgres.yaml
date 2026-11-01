@@ -25,3 +25,8 @@ params:
     default: 1.5
     description: "Query time variability"
     source: { kind: default-estimate }
+  failoverS:
+    default: 120
+    unit: s
+    description: "Primary unavailable during a failover (used when a failover failure sets no durationS)"
+    source: { kind: vendor-docs, url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html", note: "RDS Multi-AZ failover typically takes 60-120 s; upper end used" }

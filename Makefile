@@ -3,11 +3,11 @@ GO   ?= go
 WEB  := apps/web
 WASM := $(WEB)/public/engine.wasm
 
-.PHONY: test wasm web build run-api dev clean
+.PHONY: test wasm web build run-api dev lab lab-clean clean
 
 ## test: engine + API (Go) and web unit tests
 test:
-	$(GO) test ./engine/... ./apps/api/...
+	$(GO) test ./engine/... ./apps/api/... ./lab/...
 	cd $(WEB) && npm test
 
 ## wasm: compile the engine to WebAssembly for the web app
@@ -35,6 +35,14 @@ run-api:
 ## dev: Vite dev server with hot reload (no login; local only)
 dev: wasm
 	cd $(WEB) && npm run dev
+
+## lab: calibration experiment in a local kind cluster (asks first; see lab/README.md)
+lab:
+	lab/run.sh
+
+## lab-clean: delete the calibration lab's kind cluster
+lab-clean:
+	lab/run.sh clean
 
 clean:
 	rm -rf bin $(WEB)/dist $(WASM) $(WEB)/src/engine/wasm_exec.js

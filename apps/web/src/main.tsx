@@ -4,7 +4,7 @@ import { App } from './App'
 import { engine } from './engine/client'
 import './index.css'
 import { startAutoEffects, useDesign } from './store/design'
-import { decodeShare, loadLocal, type SavedDesign } from './store/persist'
+import { decodeShare, loadBaseline, loadLocal, type SavedDesign } from './store/persist'
 import { templates } from './store/templates'
 
 const root = createRoot(document.getElementById('root')!)
@@ -31,6 +31,8 @@ async function boot() {
     useDesign.getState().load(design)
     startAutoEffects()
     void useDesign.getState().runCheck()
+    const baseline = loadBaseline()
+    if (baseline) useDesign.getState().pinBaseline(baseline)
     root.render(
       <StrictMode>
         <App />

@@ -15,6 +15,7 @@ import {
   nodeId,
   PAD,
   renameNode,
+  retargetFailures,
   sortParentsFirst,
   toArchitecture,
   type EdgeData,
@@ -22,7 +23,7 @@ import {
   type FlowNode,
   type NodeData,
 } from './model'
-import { saveLocal, type SavedDesign } from './persist'
+import { saveBaseline, saveLocal, type SavedDesign } from './persist'
 
 export type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null
 
@@ -31,6 +32,16 @@ export type Status<T> =
   | { state: 'running'; last?: T }
   | { state: 'done'; value: T; ms: number } // ms: engine wall time, shown so slow devices are visible
   | { state: 'error'; message: string; last?: T }
+
+/**
+ * A pinned version of the design to compare against. Its results are
+ * computed from the pinned design itself, so edits never leak into them.
+ */
+export interface Baseline {
+  saved: SavedDesign
+  check: Status<Result>
+  timeline: Status<Timeline>
+}
 
 /** The newest value of a status, kept while a re-run is in flight or failed. */
 export function latest<T>(s: Status<T>): T | undefined {
@@ -46,8 +57,12 @@ interface DesignState {
   selection: Selection
   check: Status<Result>
   timeline: Status<Timeline>
+  baseline: Baseline | null
 
   load(d: SavedDesign): void
+  /** Pins d (default: the current design) as the comparison baseline. */
+  pinBaseline(d?: SavedDesign): void
+  clearBaseline(): void
   architecture(): Architecture
   setName(name: string): void
   onNodesChange(changes: NodeChange<FlowNode>[]): void
@@ -77,10 +92,23 @@ export const useDesign = create<DesignState>()((set, get) => ({
   selection: null,
   check: { state: 'idle' },
   timeline: { state: 'idle' },
+  baseline: null,
 
   load(d) {
     const { nodes, edges, workload } = fromArchitecture(d.architecture, get().catalog)
     set({ name: d.name, nodes, edges, workload, selection: null, check: { state: 'idle' }, timeline: { state: 'idle' } })
+  },
+
+  pinBaseline(d = savedDesign()) {
+    const saved = structuredClone(d)
+    saveBaseline(saved)
+    set({ baseline: { saved, check: { state: 'running' }, timeline: { state: 'idle' } } })
+    void runForBaseline(saved, 'check')
+  },
+
+  clearBaseline() {
+    saveBaseline(null)
+    set({ baseline: null })
   },
 
   architecture() {
@@ -187,7 +215,11 @@ export const useDesign = create<DesignState>()((set, get) => ({
   remove(sel) {
     const s = get()
     if (sel.type === 'edge') {
-      set({ edges: s.edges.filter((e) => e.id !== sel.id), selection: null })
+      set({
+        edges: s.edges.filter((e) => e.id !== sel.id),
+        workload: retargetFailures(s.workload, (t) => (t === sel.id ? undefined : t)),
+        selection: null,
+      })
       return
     }
     // A container takes its contents with it.
@@ -201,10 +233,12 @@ export const useDesign = create<DesignState>()((set, get) => ({
         }
       }
     }
+    const gone = new Set([...doomed, ...s.edges.filter((e) => doomed.has(e.source) || doomed.has(e.target)).map((e) => e.id)])
+    const workload = retargetFailures(s.workload, (t) => (gone.has(t) ? undefined : t))
     set({
       nodes: s.nodes.filter((n) => !doomed.has(n.id)),
       edges: s.edges.filter((e) => !doomed.has(e.source) && !doomed.has(e.target)),
-      workload: doomed.has(s.workload.entry) ? { ...s.workload, entry: '' } : s.workload,
+      workload: doomed.has(workload.entry) ? { ...workload, entry: '' } : workload,
       selection: null,
     })
   },
@@ -232,8 +266,26 @@ export const useDesign = create<DesignState>()((set, get) => ({
       set({ timeline: { state: 'error', message: errorMessage(e), last } })
       if (!(e instanceof EngineError)) console.error(e)
     }
+    const b = get().baseline
+    if (b && b.timeline.state !== 'done') await runForBaseline(b.saved, 'timeline')
   },
 }))
+
+/** Runs the engine on a baseline and stores the result if it is still pinned. */
+async function runForBaseline(saved: SavedDesign, what: 'check' | 'timeline') {
+  const patch = (status: Status<Result> | Status<Timeline>) => {
+    const b = useDesign.getState().baseline
+    if (b?.saved === saved) useDesign.setState({ baseline: { ...b, [what]: status } })
+  }
+  patch({ state: 'running' })
+  try {
+    const a = engineView(saved.architecture)
+    const { value, ms } = what === 'check' ? await engine.run(a) : await engine.simulate(a)
+    patch({ state: 'done', value, ms } as Status<Result> | Status<Timeline>)
+  } catch (e) {
+    patch({ state: 'error', message: errorMessage(e) })
+  }
+}
 
 let checkSeq = 0
 

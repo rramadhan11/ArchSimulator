@@ -231,19 +231,38 @@ export function renameNode(
   to: string,
 ): { nodes: FlowNode[]; edges: FlowEdge[]; workload: Workload } {
   const swap = (id: string | undefined) => (id === from ? to : id)
+  const renamed = new Map<string, string>([[from, to]])
+  const nextEdges = edges.map((e) => {
+    const data = { ...e.data }
+    const m = data.when?.match(/^(cache_(?:hit|miss)):(.*)$/)
+    if (m && m[2] === from) data.when = `${m[1]}:${to}`
+    const source = swap(e.source)!
+    const target = swap(e.target)!
+    const id = e.id === `${e.source}->${e.target}` ? `${source}->${target}` : e.id
+    if (id !== e.id) renamed.set(e.id, id)
+    return { ...e, id, source, target, data }
+  })
   return {
     nodes: nodes.map((n) => ({ ...n, id: swap(n.id)!, ...(n.parentId ? { parentId: swap(n.parentId) } : {}) })),
-    edges: edges.map((e) => {
-      const data = { ...e.data }
-      const m = data.when?.match(/^(cache_(?:hit|miss)):(.*)$/)
-      if (m && m[2] === from) data.when = `${m[1]}:${to}`
-      const source = swap(e.source)!
-      const target = swap(e.target)!
-      const id = e.id === `${e.source}->${e.target}` ? `${source}->${target}` : e.id
-      return { ...e, id, source, target, data }
-    }),
-    workload: { ...workload, entry: swap(workload.entry)! },
+    edges: nextEdges,
+    workload: retargetFailures({ ...workload, entry: swap(workload.entry)! }, (t) => renamed.get(t) ?? t),
   }
+}
+
+/**
+ * Rewrites failure targets after a rename (map returns the new id) or a
+ * deletion (map returns undefined: the failure is dropped, since the engine
+ * rejects a target that does not exist).
+ */
+export function retargetFailures(workload: Workload, map: (target: string) => string | undefined): Workload {
+  const failures = workload.timeline?.failures
+  if (!failures?.length) return workload
+  const next = failures.flatMap((f) => {
+    if (f.target === undefined) return [f]
+    const target = map(f.target)
+    return target === undefined ? [] : [{ ...f, target }]
+  })
+  return { ...workload, timeline: { ...workload.timeline, failures: next.length ? next : undefined } }
 }
 
 // ---- nested config access (catalog params use dotted paths) ----

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import kongExample from '../../../../engine/examples/k8s-kong-microservices.json'
 import type { Architecture, Catalog } from '../engine/types'
-import { canContain, edgeId, engineView, fromArchitecture, getPath, renameNode, setPath, toArchitecture } from './model'
+import { canContain, edgeId, engineView, fromArchitecture, getPath, renameNode, retargetFailures, setPath, toArchitecture } from './model'
 import { decodeShare, encodeShare, parseSaved, type SavedDesign } from './persist'
 
 // Only archetypes matter to the conversions.
@@ -56,6 +56,24 @@ describe('architecture <-> flow', () => {
     const r2 = renameNode(nodes, edges, workload, 'orders-deploy', 'orders-dep')
     expect(r2.nodes.find((n) => n.id === 'orders')!.parentId).toBe('orders-dep')
     expect(renameNode(nodes, edges, workload, 'users', 'clients').workload.entry).toBe('clients')
+  })
+
+  it('keeps failure targets pointing at renamed nodes and edges, and drops deleted ones', () => {
+    const { nodes, edges, workload } = fromArchitecture(example, catalog)
+    const w = {
+      ...workload,
+      timeline: {
+        failures: [
+          { kind: 'outage' as const, target: 'redis', atS: 1 },
+          { kind: 'latency' as const, target: 'orders->redis', atS: 2, extraMs: 5 },
+          { kind: 'zone-outage' as const, atS: 3 },
+        ],
+      },
+    }
+    const r = renameNode(nodes, edges, w, 'redis', 'cache')
+    expect(r.workload.timeline?.failures?.map((f) => f.target)).toEqual(['cache', 'orders->cache', undefined])
+    const dropped = retargetFailures(w, (t) => (t === 'redis' ? undefined : t))
+    expect(dropped.timeline?.failures?.map((f) => f.kind)).toEqual(['latency', 'zone-outage'])
   })
 })
 

@@ -34,6 +34,8 @@ type graph struct {
 	hosts     []*hosting
 	pools     []*nodePool
 	connPools []*connPool
+
+	live *live // time simulation only: faults, breakers, retries this tick
 }
 
 // connPool is the client-side connection pool a service keeps to one callee.
@@ -86,6 +88,8 @@ type gedge struct {
 	prob      float64
 	poolSize  int // connections per caller replica; 0 = unconstrained
 	async     bool
+	retry     *model.Retry // nil without retries
+	breaker   *breakerCfg  // nil without a circuit breaker
 }
 
 func (e *gedge) appliesTo(class string) bool {
@@ -137,8 +141,10 @@ type station struct {
 	lambda, work, s2 float64
 	meanS            float64 // effective mean service time (ms) on one server
 	q                QueueStats
-	fluidMs          float64 // time simulation: FIFO wait behind the fluid backlog
+	fluidMs          float64 // time simulation: FIFO wait behind the backlog at the end of the tick
+	fluidLoMs        float64 // time simulation: the same at the start of the tick
 	offeredLoad      float64 // time simulation: offered work / capacity this tick
+	down             bool    // time simulation: failed this tick (outage, failover)
 }
 
 func (st *station) addCritical(keys ...string) {
@@ -270,9 +276,14 @@ func compile(a *model.Architecture, cat *catalog.Catalog) (*graph, error) {
 	}
 	g.reportUnreached()
 	for _, e := range g.edges {
-		if e.m.Retry != nil && e.m.Retry.Max > 0 {
+		switch {
+		case e.retry == nil && e.breaker == nil:
+		case e.async:
+			g.issues = append(g.issues, Issue{Severity: SeverityWarning, Ref: e.id,
+				Message: "retries and circuit breakers are not simulated on async edges"})
+		default:
 			g.issues = append(g.issues, Issue{Severity: SeverityInfo, Ref: e.id,
-				Message: "retry policy is not modeled yet (quick check and time simulation treat a failed call as final)"})
+				Message: "retries and circuit breakers act only in the time simulation; the quick check treats a failed call as final"})
 		}
 	}
 	return g, nil
@@ -419,6 +430,12 @@ func (g *graph) addEdge(i int, seen map[string]bool) {
 		g.params.record(e.id, "poolSize", e.poolSize, src)
 	}
 	e.async = m.Async || e.from.arch == catalog.QueueStream
+	if m.Retry != nil && m.Retry.Max > 0 {
+		e.retry = m.Retry
+	}
+	if m.CircuitBreaker != nil {
+		e.breaker = g.breakerConfig(e, m.CircuitBreaker)
+	}
 }
 
 func (g *graph) edgeNum(e *gedge, key string, v *float64, def float64) float64 {

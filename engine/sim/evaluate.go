@@ -40,7 +40,7 @@ func (g *graph) evaluate(tps float64, samples int, seed uint64) *Report {
 	g.resolveReplicas(r)
 
 	for _, st := range g.stations {
-		st.q, st.meanS, st.fluidMs = QueueStats{}, 0, 0
+		st.q, st.meanS, st.fluidMs, st.fluidLoMs = QueueStats{}, 0, 0, 0
 		if st.lambda == 0 {
 			continue
 		}

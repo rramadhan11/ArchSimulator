@@ -11,9 +11,21 @@ export interface ModelNode {
   config?: Config
 }
 
+/** Wait before retry k is backoffMs·2^(k-1). */
 export interface Retry {
   max: number
   backoffMs: number
+  /** Retries allowed as % of first attempts; absent = unlimited. */
+  budgetPercent?: number
+}
+
+/** Zero/absent fields take the engine defaults (reported as assumptions). */
+export interface CircuitBreaker {
+  failureRatePercent?: number
+  windowS?: number
+  minCalls?: number
+  openS?: number
+  halfOpenCalls?: number
 }
 
 export interface ModelEdge {
@@ -36,6 +48,7 @@ export interface ModelEdge {
   keepAlive?: boolean
   timeoutMs?: number
   retry?: Retry
+  circuitBreaker?: CircuitBreaker
 }
 
 export interface RequestClass {
@@ -43,12 +56,28 @@ export interface RequestClass {
   weight: number
 }
 
+export type LoadKind = 'constant' | 'spike' | 'ramp' | 'step' | 'diurnal'
+
 export interface LoadPattern {
-  kind: 'constant' | 'spike'
+  kind: LoadKind
   peakTps?: number
   startS?: number
   rampS?: number
   holdS?: number
+  periodS?: number
+}
+
+export type FailureKind = 'instance-loss' | 'zone-outage' | 'outage' | 'latency' | 'failover'
+
+export interface Failure {
+  kind: FailureKind
+  target?: string
+  atS: number
+  durationS?: number
+  count?: number
+  zones?: number
+  extraMs?: number
+  mode?: 'error' | 'hang'
 }
 
 export interface TimelineConfig {
@@ -56,6 +85,7 @@ export interface TimelineConfig {
   load?: LoadPattern
   queueTimeoutMs?: number
   samplesPerTick?: number
+  failures?: Failure[]
 }
 
 export interface Workload {
@@ -237,6 +267,23 @@ export interface Tick {
   replicas: { desired: number; ready: number }[]
   stations: { load: number | null; backlog: number; waitMs: number }[]
   pools?: { ready: number; provisioning: number }[]
+  edges?: EdgeTick[]
+}
+
+export interface EdgeTick {
+  attempts: number
+  retries: number
+  failRate: number
+  breaker?: 'closed' | 'open' | 'half-open'
+}
+
+export interface FailureSpan {
+  kind: FailureKind
+  target?: string
+  startS: number
+  /** null: until the end; equal to startS: a one-off event. */
+  endS: number | null
+  label: string
 }
 
 export interface Timeline {
@@ -245,6 +292,8 @@ export interface Timeline {
   services: string[]
   stations: string[]
   pools?: string[]
+  edges?: string[]
+  failures?: FailureSpan[]
   ticks: Tick[]
   events: { t: number; ref: string; message: string }[] | null
   summary: { peakP99Ms: number | null; maxErrorRate: number; sloBreachS: number; firstBreachS: number | null }

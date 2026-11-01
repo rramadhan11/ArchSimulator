@@ -18,17 +18,24 @@ Product & technical plan: [PLAN.md](PLAN.md) (section 0 lists the v1.1 decisions
   - p50/p95/p99 latency and max TPS with the limiting component
   - per-hop latency and a utilization heatmap on the canvas
   - issues and the assumptions behind the numbers, with a confidence score
-- **Time simulation**: steps the design once per second through a load pattern (constant or
-  spike) and models:
+- **Time simulation**: steps the design once per second through a load pattern (constant,
+  spike, ramp, step or diurnal) and models:
   - HPA and VM autoscaler control loops
-  - pod startup, Pending pods and node provisioning
+  - pod startup, Pending pods, node provisioning and cluster-autoscaler scale-down
   - backlogs and timeouts when demand exceeds capacity
+  - retries (backoff, retry budget) and circuit breakers, so retry storms show up
+- **Failure injection**: lose nodes, pods or VMs, a whole zone, or a dependency (failing
+  fast or hanging); add latency to a component or edge; fail a database over.
+- **Compare**: pin a baseline and see the quick check and timeline of later edits next to it.
 - **Local-first designs**: autosave in the browser, JSON import/export (same format as the
   CLI), and share links that carry the compressed design in the URL hash.
 - **Single-user login** in front of everything, so a public deployment is not open to
   anyone who finds the URL.
 
-Not modeled yet (Phase 2): retries and backoff, circuit breakers, and failure injection.
+Not modeled yet: memory pressure (OOM kills, eviction), callers' threads held by a hung
+dependency, and retries in the quick check (the time simulation models them). The
+calibration lab against real load tests (PLAN §9, [lab/](lab/README.md)) is ready but has
+not been run yet.
 
 ## How it works
 
@@ -37,7 +44,7 @@ The engine is pure Go with no IO.
 | Mode | Function | Method |
 |---|---|---|
 | Quick check | `sim.Run` | Steady-state queueing models (Erlang C, M/M/c with a Kingman correction, USL), Little's Law, and seeded Monte Carlo sampling for percentiles. Max TPS comes from a search over load. |
-| Time simulation | `sim.Simulate` | 1 s ticks with fluid backlogs. Runs the same autoscaling algorithms as Kubernetes and cloud autoscalers. At steady state it agrees with the quick check (golden tests). |
+| Time simulation | `sim.Simulate` | 1 s ticks with fluid backlogs. Runs the same autoscaling algorithms as Kubernetes and cloud autoscalers. Failed attempts come back as retries in later ticks; circuit breakers and injected failures change what each tick sees. At steady state it agrees with the quick check (golden tests). |
 
 The engine is compiled to WebAssembly and runs in a Web Worker, so simulations happen in
 the browser, and the Go server only serves the app and handles login.
@@ -47,11 +54,12 @@ the browser, and the Go server only serves the app and handles login.
 | Path | What |
 |---|---|
 | `engine/` | Go simulation engine: `model`, `catalog` (embedded YAML), `sim`, CLI in `cmd/archsim`, WASM entry in `cmd/wasm` |
-| `engine/sim/` | Quick check (`run.go`, `evaluate.go`, `montecarlo.go`) and time simulation (`timeline.go`) |
+| `engine/sim/` | Quick check (`run.go`, `evaluate.go`, `montecarlo.go`), time simulation (`timeline.go`), retries and circuit breakers (`resilience.go`), failure injection (`faults.go`) |
 | `engine/catalog/data/` | Component catalog: every default carries a source |
 | `engine/examples/` | Example designs: test fixtures and the web app's templates |
 | `apps/web/` | React + React Flow editor, ECharts charts, zustand store |
 | `apps/api/` | Go server: single-user login, CSP, gzip, in front of the built web app |
+| `lab/` | Calibration lab: a reference service, HPA and k6 spike in kind, compared with ArchSim's simulation ([lab/README.md](lab/README.md)) |
 
 ## Getting started
 
@@ -69,6 +77,7 @@ make build       # engine.wasm, web app (dist/ + .gz copies), bin/archsim-api, b
 go run ./engine/cmd/archsim run engine/examples/k8s-kong-microservices.json
 go run ./engine/cmd/archsim run --tps 8000 --json engine/examples/rest-postgres.json
 go run ./engine/cmd/archsim simulate engine/examples/k8s-spike.json   # needs workload.timeline
+go run ./engine/cmd/archsim simulate engine/examples/retry-storm.json # failure + retries
 go run ./engine/cmd/archsim catalog
 ```
 

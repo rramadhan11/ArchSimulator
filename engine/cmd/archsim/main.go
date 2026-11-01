@@ -230,6 +230,9 @@ func printTimeline(out io.Writer, tl *sim.Timeline, every int) {
 	for _, s := range tl.Services {
 		fmt.Fprintf(tw, "%s\t", s)
 	}
+	for _, e := range tl.Edges {
+		fmt.Fprintf(tw, "%s\t", e)
+	}
 	fmt.Fprintf(tw, "BUSIEST\t\n")
 	for i, tk := range tl.Ticks {
 		if i%every != 0 && i != len(tl.Ticks)-1 {
@@ -243,6 +246,9 @@ func printTimeline(out io.Writer, tl *sim.Timeline, every int) {
 		for _, r := range tk.Replicas {
 			fmt.Fprintf(tw, "%d/%d\t", r.Ready, r.Desired)
 		}
+		for _, e := range tk.Edges {
+			fmt.Fprintf(tw, "%.0f/s %s\t", e.Attempts, e.Breaker)
+		}
 		busiest, load := "", -1.0
 		for k, st := range tk.Stations {
 			if st.Load != nil && *st.Load > load {
@@ -252,7 +258,17 @@ func printTimeline(out io.Writer, tl *sim.Timeline, every int) {
 		fmt.Fprintf(tw, "%s %.0f%%\t\n", busiest, load*100)
 	}
 	tw.Flush()
-	fmt.Fprintln(out, "(replicas shown as ready/desired)")
+	fmt.Fprintln(out, "(replicas shown as ready/desired; edges as attempts/s incl. retries and breaker state)")
+	if len(tl.Failures) > 0 {
+		fmt.Fprintln(out, "\nInjected failures:")
+		for _, f := range tl.Failures {
+			end := "end of run"
+			if f.EndS != nil {
+				end = fmt.Sprintf("t=%.0f", *f.EndS)
+			}
+			fmt.Fprintf(out, "  t=%-5.0f %s %s (until %s)\n", f.StartS, f.Target, f.Label, end)
+		}
+	}
 
 	if len(tl.Events) > 0 {
 		fmt.Fprintln(out, "\nEvents:")

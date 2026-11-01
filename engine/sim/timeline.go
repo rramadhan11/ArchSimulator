@@ -26,26 +26,34 @@ import (
 //     saturated pod cannot report more than its limit), with sync period,
 //     tolerance, scale-up policy and scale-down stabilization. New replicas
 //     become ready after a startup delay; pods that do not fit stay Pending
-//     and make the cluster autoscaler provision nodes after a delay.
+//     and make the cluster autoscaler provision nodes after a delay; it
+//     removes nodes that stay unneeded.
+//   - Resilience: failed attempts return as retries in later ticks (with
+//     backoff and an optional budget) and circuit breakers fail calls fast
+//     while open (resilience.go). Injected failures take out instances,
+//     zones or dependencies, add latency, or fail a database over (faults.go).
 //
-// Not modeled yet (Phase 2): retries, circuit breakers, failure injection,
-// cluster-autoscaler scale-down, memory pressure.
+// Not modeled: memory pressure (OOM kills, eviction), and the threads or
+// connections a caller holds while waiting on a hung dependency.
 
 const tickS = 1.0
 
 // Timeline is the result of a time simulation. Per-tick series are parallel
 // to Services, Stations and Pools.
 type Timeline struct {
-	CatalogVersion string          `json:"catalogVersion"`
-	TickS          float64         `json:"tickS"`
-	Services       []string        `json:"services"`
-	Stations       []string        `json:"stations"`
-	Pools          []string        `json:"pools,omitempty"`
-	Ticks          []Tick          `json:"ticks"`
-	Events         []Event         `json:"events"`
-	Summary        TimelineSummary `json:"summary"`
-	Issues         []Issue         `json:"issues,omitempty"`
-	Assumptions    []Assumption    `json:"assumptions"`
+	CatalogVersion string   `json:"catalogVersion"`
+	TickS          float64  `json:"tickS"`
+	Services       []string `json:"services"`
+	Stations       []string `json:"stations"`
+	Pools          []string `json:"pools,omitempty"`
+	// Edges lists the edges with a retry policy or circuit breaker.
+	Edges       []string        `json:"edges,omitempty"`
+	Failures    []FailureSpan   `json:"failures,omitempty"`
+	Ticks       []Tick          `json:"ticks"`
+	Events      []Event         `json:"events"`
+	Summary     TimelineSummary `json:"summary"`
+	Issues      []Issue         `json:"issues,omitempty"`
+	Assumptions []Assumption    `json:"assumptions"`
 }
 
 type Tick struct {
@@ -57,6 +65,16 @@ type Tick struct {
 	Replicas []ReplicaTick `json:"replicas"`
 	Stations []StationTick `json:"stations"`
 	Pools    []PoolTick    `json:"pools,omitempty"`
+	Edges    []EdgeTick    `json:"edges,omitempty"`
+}
+
+type EdgeTick struct {
+	Attempts float64 `json:"attempts"` // calls/s sent, retries included
+	Retries  float64 `json:"retries"`  // retries/s among them
+	// FailRate is the sampled share of attempts that failed (errors and
+	// timeouts); while half-open, the share of probes.
+	FailRate float64 `json:"failRate"`
+	Breaker  string  `json:"breaker,omitempty"`
 }
 
 type ReplicaTick struct {
@@ -128,6 +146,18 @@ type simState struct {
 	reject  []float64 // per node, probability a visit is refused this tick
 	wasBusy []bool    // per output station, backlog at the previous tick
 
+	lv          *live
+	attempts    []float64    // per visit: calls/s sent to it this tick, retries included
+	firsts      []float64    // per visit: of which first attempts
+	failRate    []float64    // per visit: failed share of attempts, last sampled
+	failMs      []float64    // per visit: mean duration of a failed attempt, last sampled
+	sites       [][]*visit   // per edge: the callee visits it reaches
+	retries     []*retrySite // per visit; nil without a retry policy
+	breakers    []*breaker   // per edge; nil without a circuit breaker
+	resEdges    []*gedge     // edges reported per tick
+	retryCapped []bool       // per edge: the retry budget dropped retries last tick
+	faults      []*fault
+
 	timeoutS float64
 	samples  int
 	seed     uint64
@@ -162,13 +192,18 @@ type hostState struct {
 	recs     []recommendation
 	pending  int
 	pinned   bool
+	down     int // unmanaged instances lost to a failure, not restarted
 }
 
 type poolState struct {
 	p            *nodePool
 	provisionS   float64
+	unneededS    float64
+	afterAddS    float64
 	ready        int
 	provisioning []float64 // ready-at times
+	lastAdd      float64   // last cluster-autoscaler scale-up
+	unneeded     []float64 // since when each unneeded node is unneeded, oldest first
 }
 
 func (g *graph) newSimState(w model.Workload) *simState {
@@ -240,13 +275,51 @@ func (g *graph) newSimState(w model.Workload) *simState {
 		s.out.Services = append(s.out.Services, h.svc.m.ID)
 	}
 	for _, p := range g.pools {
-		ps := &poolState{p: p, ready: p.nodesNeeded}
+		ps := &poolState{p: p, ready: p.nodesNeeded, provisionS: g.nonNeg(p.n, "provisionS"),
+			lastAdd: math.Inf(-1)}
 		if p.autoscaled {
-			ps.provisionS = g.nonNeg(p.n, "provisionS")
+			ps.unneededS = g.nonNeg(p.n, "scaleDownUnneededS")
+			ps.afterAddS = g.nonNeg(p.n, "scaleDownDelayAfterAddS")
 		}
 		s.pools = append(s.pools, ps)
 		s.out.Pools = append(s.out.Pools, p.n.m.ID)
 	}
+
+	// Resilience state. It is attached after the initial steady state, which
+	// (like the quick check) runs without faults or retries.
+	s.lv = newLive(len(g.nodes), len(g.edges), len(g.visits), tl.QueueTimeout())
+	g.live = s.lv
+	n := len(g.visits)
+	s.attempts, s.firsts, s.failRate, s.failMs = make([]float64, n), make([]float64, n), make([]float64, n), make([]float64, n)
+	s.sites = make([][]*visit, len(g.edges))
+	s.retries = make([]*retrySite, n)
+	s.breakers = make([]*breaker, len(g.edges))
+	s.retryCapped = make([]bool, len(g.edges))
+	for _, v := range g.visits {
+		for _, grp := range v.groups {
+			for _, c := range grp {
+				s.sites[c.e.idx] = append(s.sites[c.e.idx], c.child)
+				if c.e.retry != nil && !c.e.async {
+					s.retries[c.child.idx] = newRetrySite(c.e)
+				}
+			}
+		}
+	}
+	for _, e := range g.edges {
+		if e.async || (e.retry == nil && e.breaker == nil) {
+			continue
+		}
+		if e.breaker != nil {
+			s.breakers[e.idx] = newBreaker(e)
+		}
+		if e.retry != nil && e.retry.BudgetPercent == nil {
+			g.issues = append(g.issues, Issue{Severity: SeverityInfo, Ref: e.id,
+				Message: fmt.Sprintf("no retry budget: while %s fails, retries can multiply its load up to %d×", e.to.m.ID, e.retry.Max+1)})
+		}
+		s.resEdges = append(s.resEdges, e)
+		s.out.Edges = append(s.out.Edges, e.id)
+	}
+	s.resolveFaults()
 	return s
 }
 
@@ -282,20 +355,26 @@ func (s *simState) event(t float64, ref, format string, args ...any) {
 
 func (s *simState) step(i int, tps float64) {
 	t := float64(i) * tickS
+	s.applyFaults(t)
 	s.provision(t)
 	s.schedule(t)
-	s.flow(t, tps)
+	s.probeBreakers(t)
+	s.flow(i, tps)
 
 	for _, hs := range s.hosts {
 		hs.usage += hs.h.svc.st.work / 1000 / hs.h.uslFactor
 		hs.usageN++
 	}
 	tick := Tick{T: t, OfferedTPS: tps}
+	clear(s.lv.att)
+	clear(s.lv.fail)
+	clear(s.lv.failMs)
 	mc := s.g.monteCarlo(s.samples, s.seed+uint64(i), s.reject, false)
 	tick.ErrorRate = mc.errorRate
 	if mc.errorRate < 1 {
 		tick.Latency = &mc.latency
 	}
+	s.settleCalls(i, t)
 	if i > 0 {
 		s.autoscale(i, t)
 	}
@@ -333,12 +412,13 @@ func (s *simState) schedule(t float64) {
 		hs.h.desired = hs.desired
 		hs.h.scheduled = hs.desired
 	}
-	for _, ps := range s.pools {
-		ps.p.pack(ps.ready)
+	used := make([]int, len(s.pools))
+	for k, ps := range s.pools {
+		used[k] = ps.p.pack(ps.ready)
 	}
 	for _, hs := range s.hosts {
 		running := hs.ready + len(hs.starting)
-		switch target := hs.h.scheduled; {
+		switch target := hs.h.scheduled - hs.down; {
 		case target > running:
 			for range target - running {
 				hs.starting = append(hs.starting, t+hs.startupS)
@@ -355,23 +435,59 @@ func (s *simState) schedule(t float64) {
 		}
 		hs.pending = pending
 	}
-	for _, ps := range s.pools {
-		if !ps.p.autoscaled || !slices.ContainsFunc(s.hosts, func(hs *hostState) bool { return hs.h.pool == ps.p && hs.pending > 0 }) {
+	for k, ps := range s.pools {
+		if !ps.p.autoscaled {
 			continue
 		}
+		if !slices.ContainsFunc(s.hosts, func(hs *hostState) bool { return hs.h.pool == ps.p && hs.pending > 0 }) {
+			s.scaleDownPool(ps, used[k], t)
+			continue
+		}
+		ps.unneeded = ps.unneeded[:0]
 		need := ps.p.pack(ps.p.maxNodes)
 		ps.p.pack(ps.ready) // restore the actual placement
 		if add := need - ps.ready - len(ps.provisioning); add > 0 {
 			for range add {
 				ps.provisioning = append(ps.provisioning, t+ps.provisionS)
 			}
+			ps.lastAdd = t
 			s.event(t, ps.p.n.m.ID, "cluster autoscaler requests %d node(s), ready in %.0fs", add, ps.provisionS)
 		}
 	}
 }
 
+// scaleDownPool removes each node the pods no longer need once it has been
+// unneeded for scaleDownUnneededS (and not within scaleDownDelayAfterAddS of
+// a scale-up). Pods are packed first-fit decreasing, so the surplus nodes are
+// empty: the model does not evict and restart pods the way draining an
+// underutilized node does, nor apply the 50% utilization threshold.
+func (s *simState) scaleDownPool(ps *poolState, used int, t float64) {
+	surplus := ps.ready - used
+	if len(ps.provisioning) > 0 {
+		surplus = 0
+	}
+	if surplus < len(ps.unneeded) {
+		ps.unneeded = ps.unneeded[:max(surplus, 0)] // the most recently unneeded are needed again
+	}
+	for len(ps.unneeded) < surplus {
+		ps.unneeded = append(ps.unneeded, t)
+	}
+	if t-ps.lastAdd < ps.afterAddS {
+		return
+	}
+	remove := 0
+	for remove < len(ps.unneeded) && t-ps.unneeded[remove] >= ps.unneededS {
+		remove++
+	}
+	if remove > 0 {
+		ps.ready -= remove
+		ps.unneeded = ps.unneeded[remove:]
+		s.event(t, ps.p.n.m.ID, "cluster autoscaler removes %d unneeded node(s) (%d left)", remove, ps.ready)
+	}
+}
+
 // flow propagates offered load through the stations for one tick.
-func (s *simState) flow(t, tps float64) {
+func (s *simState) flow(i int, tps float64) {
 	g := s.g
 	clear(s.offered)
 	clear(s.reject)
@@ -387,7 +503,7 @@ func (s *simState) flow(t, tps float64) {
 	}
 	for _, st := range g.stations {
 		st.lambda, st.work, st.s2 = 0, 0, 0
-		st.q, st.meanS, st.fluidMs, st.offeredLoad = QueueStats{}, 0, 0, 0
+		st.q, st.meanS, st.fluidMs, st.fluidLoMs, st.offeredLoad, st.down = QueueStats{}, 0, 0, 0, 0, false
 	}
 
 	for _, n := range s.order {
@@ -400,6 +516,15 @@ func (s *simState) flow(t, tps float64) {
 		var sts []*station
 		byStation := map[*station][]*visit{}
 		for _, v := range visits {
+			// A failed node (or failing-over primary) serves nothing; what it
+			// had queued is lost.
+			if s.lv.down[n.idx] != "" || (s.lv.primaryDown[n.idx] != "" && v.st != nil && v.st == n.st) {
+				s.served[v.idx], s.backlog[v.idx] = 0, 0
+				if v.st != nil {
+					v.st.down = true
+				}
+				continue
+			}
 			if v.st == nil || v.serviceMs == 0 {
 				s.served[v.idx] = s.offered[v.idx]
 				continue
@@ -425,13 +550,7 @@ func (s *simState) flow(t, tps float64) {
 				}
 			}
 		}
-		for _, v := range visits {
-			for _, grp := range v.groups {
-				for _, c := range grp {
-					s.offered[c.child.idx] += s.served[v.idx] * c.e.calls * c.e.prob
-				}
-			}
-		}
+		s.dispatch(i, n, visits)
 	}
 
 	for _, st := range s.stations {
@@ -440,7 +559,7 @@ func (s *simState) flow(t, tps float64) {
 		}
 		mean := st.work / st.lambda
 		st.meanS = mean / st.speed
-		if st.fluidMs > 0 {
+		if st.fluidMs > 0 || st.fluidLoMs > 0 {
 			st.q = QueueStats{Rho: 1} // the fluid backlog stands in for the stochastic wait
 			continue
 		}
@@ -457,10 +576,11 @@ func (s *simState) flow(t, tps float64) {
 // plus backlog, up to capacity, shared in proportion to their work.
 func (s *simState) serveStation(st *station, vs []*visit) {
 	capWork := float64(st.servers) * st.speed * 1000 * tickS // ms of speed-1 work per tick
-	demand, offeredWork := 0.0, 0.0
+	demand, offeredWork, carried := 0.0, 0.0, 0.0
 	for _, v := range vs {
 		demand += (s.offered[v.idx]*tickS + s.backlog[v.idx]) * v.serviceMs
 		offeredWork += s.offered[v.idx] * tickS * v.serviceMs
+		carried += s.backlog[v.idx] * v.serviceMs
 	}
 	frac := 1.0
 	if demand > capWork {
@@ -508,8 +628,11 @@ func (s *simState) serveStation(st *station, vs []*visit) {
 		st.work += r * v.serviceMs
 		st.s2 += r * v.serviceMs * v.serviceMs * (1 + v.cs2)
 	}
-	if left > 0 && capWork > 0 {
-		st.fluidMs = waitS * 1000
+	if capWork > 0 {
+		if left > 0 {
+			st.fluidMs = waitS * 1000
+		}
+		st.fluidLoMs = math.Min(carried/capWork*tickS, s.timeoutS) * 1000
 	}
 	st.offeredLoad = offeredWork / capWork
 }
@@ -575,7 +698,7 @@ func (s *simState) record(tick *Tick) {
 			backlog += s.backlog[v.idx]
 		}
 		var load *float64
-		if !math.IsInf(st.offeredLoad, 0) && !math.IsNaN(st.offeredLoad) {
+		if !st.down && !math.IsInf(st.offeredLoad, 0) && !math.IsNaN(st.offeredLoad) {
 			load = ptr(st.offeredLoad)
 		}
 		tick.Stations = append(tick.Stations, StationTick{Load: load, Backlog: backlog, WaitMs: st.fluidMs})
@@ -590,6 +713,25 @@ func (s *simState) record(tick *Tick) {
 	}
 	for _, ps := range s.pools {
 		tick.Pools = append(tick.Pools, PoolTick{Ready: ps.ready, Provisioning: len(ps.provisioning)})
+	}
+	for _, e := range s.resEdges {
+		var et EdgeTick
+		failed := 0.0
+		for _, v := range s.sites[e.idx] {
+			et.Attempts += s.attempts[v.idx]
+			et.Retries += s.attempts[v.idx] - s.firsts[v.idx]
+			failed += s.attempts[v.idx] * s.failRate[v.idx]
+		}
+		if et.Attempts > 0 {
+			et.FailRate = failed / et.Attempts
+		}
+		if b := s.breakers[e.idx]; b != nil {
+			et.Breaker = b.state
+			if b.state == breakerHalfOpen {
+				et.FailRate, _ = b.probeRate(s)
+			}
+		}
+		tick.Edges = append(tick.Edges, et)
 	}
 }
 

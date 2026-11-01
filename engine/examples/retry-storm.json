@@ -1,0 +1,33 @@
+{
+  "version": "0.1",
+  "catalogVersion": "2026.10",
+  "nodes": [
+    { "id": "users", "kind": "client.web" },
+    { "id": "lb", "kind": "lb.alb" },
+    { "id": "pool", "kind": "k8s.nodepool", "config": { "instanceType": "c6i.xlarge", "min": 2, "max": 6, "clusterAutoscaler": true } },
+    { "id": "api-deploy", "kind": "k8s.deployment", "parent": "pool",
+      "config": { "requests": { "cpu": "500m", "memory": "512Mi" }, "limits": { "cpu": "1" },
+                  "hpa": { "min": 3, "max": 20, "targetCPU": 70 } } },
+    { "id": "api", "kind": "service.go", "parent": "api-deploy", "config": { "cpuMsPerReq": 2 } },
+    { "id": "inventory", "kind": "service.go", "config": { "cpuMsPerReq": 8, "replicas": 4, "vcpu": 2 } },
+    { "id": "pg", "kind": "db.postgres", "config": { "instanceType": "db.r6g.xlarge", "maxConnections": 400 } }
+  ],
+  "edges": [
+    { "from": "users", "to": "lb" },
+    { "from": "lb", "to": "api", "timeoutMs": 5000 },
+    { "id": "api-inventory", "from": "api", "to": "inventory", "timeoutMs": 800,
+      "retry": { "max": 3, "backoffMs": 100 } },
+    { "from": "inventory", "to": "pg", "op": "read" }
+  ],
+  "workload": {
+    "entry": "users",
+    "targetTps": 500,
+    "slo": { "p99Ms": 300, "errorRate": 0.001 },
+    "timeline": {
+      "durationS": 300,
+      "failures": [
+        { "kind": "latency", "target": "inventory", "atS": 60, "durationS": 30, "extraMs": 1000 }
+      ]
+    }
+  }
+}

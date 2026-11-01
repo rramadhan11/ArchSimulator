@@ -63,8 +63,10 @@ func TestTimelineFluidBacklog(t *testing.T) {
 		within(t, fmt.Sprintf("wait@%d", i), st.WaitMs, 500*float64(i+1), 1e-9)
 		within(t, fmt.Sprintf("load@%d", i), *st.Load, 1.5, 1e-9)
 	}
-	if tk := out.Ticks[9]; tk.Latency.P50Ms < 5000 {
-		t.Errorf("p50 at t=9 = %.0f ms, want >= the 5000 ms backlog wait", tk.Latency.P50Ms)
+	// Arrivals during t=9 wait behind a backlog growing from 4.5 s to 5 s of
+	// work: the median waits ~4.75 s, plus a ~7 ms median service time.
+	if p50 := out.Ticks[9].Latency.P50Ms; p50 < 4700 || p50 > 4820 {
+		t.Errorf("p50 at t=9 = %.0f ms, want ~4757 (median of a 4500-5000 ms wait)", p50)
 	}
 
 	// With a 2 s queue timeout the backlog caps at 200 visits and the 50/s

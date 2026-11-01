@@ -106,6 +106,7 @@ function TopBar() {
           Export
         </Button>
         <Button onClick={() => void share()}>Share link</Button>
+        <BaselineControl onPinned={() => flash('Pinned as baseline: results now show this version next to your edits')} />
         <form method="post" action="/logout">
           <Button type="submit" variant="ghost" title="Sign out">
             Sign out
@@ -113,6 +114,29 @@ function TopBar() {
         </form>
       </div>
     </header>
+  )
+}
+
+function BaselineControl({ onPinned }: { onPinned: () => void }) {
+  const baseline = useDesign((s) => s.baseline)
+  const { pinBaseline, clearBaseline } = useDesign.getState()
+  if (!baseline) {
+    return (
+      <Button variant="ghost" title="Keep a copy of this version to compare later edits against" onClick={() => (pinBaseline(), onPinned())}>
+        Pin baseline
+      </Button>
+    )
+  }
+  return (
+    <span className="flex h-7 items-center gap-1 rounded-md border border-dashed border-line-strong pr-1 pl-2 text-[11.5px] text-muted">
+      vs <span className="max-w-[140px] truncate font-medium text-fg">{baseline.saved.name}</span>
+      <button type="button" className="px-1 hover:text-fg" title="Re-pin: make the current design the baseline" onClick={() => (pinBaseline(), onPinned())}>
+        ⟳
+      </button>
+      <button type="button" className="px-1 hover:text-bad" title="Stop comparing" onClick={clearBaseline}>
+        ×
+      </button>
+    </span>
   )
 }
 

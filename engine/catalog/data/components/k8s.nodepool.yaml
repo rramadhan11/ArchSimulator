@@ -7,3 +7,5 @@ params:
   max: { default: 10, source: { kind: default-estimate } }
   clusterAutoscaler: { default: true, description: "When false the pool stays at min nodes", source: { kind: default-estimate } }
   provisionS: { default: 90, unit: s, description: "Pending pod to new node Ready: autoscaler scan, VM boot, kubelet registration", source: { kind: default-estimate } }
+  scaleDownUnneededS: { default: 600, unit: s, description: "Cluster autoscaler removes a node after it has been unneeded this long", source: { kind: vendor-docs, url: "https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md", note: "--scale-down-unneeded-time defaults to 10 minutes" } }
+  scaleDownDelayAfterAddS: { default: 600, unit: s, description: "No scale-down for this long after a scale-up", source: { kind: vendor-docs, url: "https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md", note: "--scale-down-delay-after-add defaults to 10 minutes" } }

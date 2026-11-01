@@ -34,6 +34,65 @@ function RefLink({ refId }: { refId: string }) {
   )
 }
 
+/** Current results next to the pinned baseline's. */
+function BaselineCompare({ current }: { current: Result }) {
+  const baseline = useDesign((s) => s.baseline)
+  if (!baseline) return null
+  const b = latest(baseline.check)
+  if (!b) {
+    return (
+      <p className="text-[11.5px] text-muted">
+        {baseline.check.state === 'error' ? `Baseline “${baseline.saved.name}” failed: ${baseline.check.message}` : `Computing baseline “${baseline.saved.name}”…`}
+      </p>
+    )
+  }
+  const ms = (x?: number) => (x === undefined ? 'unbounded' : fmtMs(x))
+  const tps = (x: number | null) => (x === null ? '∞' : `${fmt(x)} TPS`)
+  // label, baseline, current, relative change, and +1 when higher is better / -1 when lower is
+  const rows: [string, string, string, number | undefined, number][] = [
+    ['verdict', verdictStyle[b.target.verdict].label, verdictStyle[current.target.verdict].label, undefined, 0],
+    ['p99', ms(b.target.latency?.p99Ms), ms(current.target.latency?.p99Ms), rel(current.target.latency?.p99Ms, b.target.latency?.p99Ms), -1],
+    ['errors', pct(b.target.errorRate), pct(current.target.errorRate), undefined, 0],
+    ['max sustainable', tps(b.maxSustainableTps), tps(current.maxSustainableTps), rel(current.maxSustainableTps, b.maxSustainableTps), 1],
+  ]
+  return (
+    <div>
+      <h3 className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">Compared with baseline “{baseline.saved.name}”</h3>
+      <table className="num w-full max-w-xl text-[12px]">
+        <thead>
+          <tr className="text-left text-[10.5px] text-muted">
+            <th className="font-medium" />
+            <th className="font-medium">baseline</th>
+            <th className="font-medium">current</th>
+            <th className="font-medium">change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, was, now, change, better]) => (
+            <tr key={label} className="border-t border-line">
+              <td className="py-1 text-muted">{label}</td>
+              <td className="py-1">{was}</td>
+              <td className="py-1 font-medium">{now}</td>
+              <td className={cx('py-1', change !== undefined && change * better > 0.005 && 'text-ok', change !== undefined && change * better < -0.005 && 'text-bad')}>
+                {change === undefined ? (was === now ? '=' : '') : `${change > 0 ? '+' : ''}${fmt(Math.abs(change) < 0.0005 ? 0 : change * 100, 1)}%`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {b.target.tps !== current.target.tps && <p className="mt-1 text-[11px] text-warn">Different target TPS ({fmt(b.target.tps)} vs {fmt(current.target.tps)}): compare with care.</p>}
+    </div>
+  )
+}
+
+const pct = (x?: number) => (x === undefined ? '–' : `${fmt(x * 100, 3)}%`)
+
+/** Relative change from was to now; undefined when either is missing or infinite. */
+function rel(now: number | null | undefined, was: number | null | undefined): number | undefined {
+  if (now == null || was == null || was === 0) return undefined
+  return now / was - 1
+}
+
 const severityCls: Record<Issue['severity'], string> = { error: 'text-bad', warning: 'text-warn', info: 'text-muted' }
 
 export function QuickCheck() {
@@ -76,6 +135,7 @@ export function QuickCheck() {
         />
         <Stat label="Confidence" value={r.confidence.level} sub={`score ${fmt(r.confidence.score, 2)}`} tone={r.confidence.level === 'low' ? 'warn' : undefined} />
       </div>
+      <BaselineCompare current={result} />
       {r.confidence.criticalDefaults?.length ? <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[12px]">{r.confidence.summary}</p> : null}
 
       <div className="grid gap-4 xl:grid-cols-2">

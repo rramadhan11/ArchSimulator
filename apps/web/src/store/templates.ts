@@ -10,6 +10,7 @@ const titles: Record<string, string> = {
   'k8s-kong-microservices': 'Microservices on K8s + Kong',
   'event-driven-kafka': 'Event-driven with Kafka',
   'k8s-spike': 'K8s HPA under a traffic spike',
+  'retry-storm': 'Retry storm after a slow dependency',
 }
 
 export interface Template {

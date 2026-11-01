@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 )
 
 const SchemaVersion = "0.1"
@@ -58,13 +59,32 @@ type Edge struct {
 	PayloadRespKB *float64 `json:"payloadRespKB,omitempty"`
 	PoolSize      *int     `json:"poolSize,omitempty"` // connections per caller replica
 	KeepAlive     *bool    `json:"keepAlive,omitempty"`
-	TimeoutMs     float64  `json:"timeoutMs,omitempty"`
-	Retry         *Retry   `json:"retry,omitempty"`
+	// TimeoutMs applies to each attempt (a retry gets a fresh timeout).
+	TimeoutMs      float64         `json:"timeoutMs,omitempty"`
+	Retry          *Retry          `json:"retry,omitempty"`
+	CircuitBreaker *CircuitBreaker `json:"circuitBreaker,omitempty"`
 }
 
+// Retry re-sends a failed call (error or timeout). The wait before retry k
+// (1-based) is BackoffMs·2^(k-1).
 type Retry struct {
 	Max       int     `json:"max"`
 	BackoffMs float64 `json:"backoffMs"`
+	// BudgetPercent caps retries at this share of first attempts (like
+	// Finagle's RetryBudget or gRPC retry throttling); nil = unlimited.
+	BudgetPercent *float64 `json:"budgetPercent,omitempty"`
+}
+
+const MaxRetries = 10
+
+// CircuitBreaker fails calls fast while the callee is failing. Zero fields
+// take the defaults reported as assumptions by the engine.
+type CircuitBreaker struct {
+	FailureRatePercent float64 `json:"failureRatePercent,omitempty"` // opens at or above this failed share
+	WindowS            int     `json:"windowS,omitempty"`            // sliding window the rate is measured over
+	MinCalls           int     `json:"minCalls,omitempty"`           // calls in the window before it can open
+	OpenS              float64 `json:"openS,omitempty"`              // time open before probing (half-open)
+	HalfOpenCalls      int     `json:"halfOpenCalls,omitempty"`      // probe calls per second while half-open
 }
 
 type Workload struct {
@@ -84,27 +104,101 @@ type Timeline struct {
 	Load      *LoadPattern `json:"load,omitempty"` // nil = constant TargetTPS
 	// QueueTimeoutMs drops queued work that has waited longer than this
 	// (clients give up), counting it as errors.
-	QueueTimeoutMs float64 `json:"queueTimeoutMs,omitempty"`
-	SamplesPerTick int     `json:"samplesPerTick,omitempty"`
+	QueueTimeoutMs float64   `json:"queueTimeoutMs,omitempty"`
+	SamplesPerTick int       `json:"samplesPerTick,omitempty"`
+	Failures       []Failure `json:"failures,omitempty"`
 }
 
-// LoadPattern shapes offered load over time.
+// LoadPattern shapes offered load over time, starting from TargetTPS.
 //
 //	constant: TargetTPS throughout
-//	spike:    TargetTPS, then a linear ramp of RampS to PeakTPS at StartS,
+//	spike:    a linear ramp of RampS from TargetTPS to PeakTPS at StartS,
 //	          held for HoldS, then a linear ramp back down
+//	ramp:     a linear ramp of RampS from TargetTPS to PeakTPS at StartS,
+//	          then held until the end
+//	step:     PeakTPS from StartS for HoldS (0 = until the end)
+//	diurnal:  a cosine wave from TargetTPS (trough at StartS) to PeakTPS
+//	          (crest half a PeriodS later); the period is usually compressed,
+//	          while control loops keep real-time delays
 type LoadPattern struct {
 	Kind    string  `json:"kind"`
 	PeakTPS float64 `json:"peakTps,omitempty"`
 	StartS  float64 `json:"startS,omitempty"`
 	RampS   float64 `json:"rampS,omitempty"`
 	HoldS   float64 `json:"holdS,omitempty"`
+	PeriodS float64 `json:"periodS,omitempty"`
 }
 
 const (
 	LoadConstant = "constant"
 	LoadSpike    = "spike"
+	LoadRamp     = "ramp"
+	LoadStep     = "step"
+	LoadDiurnal  = "diurnal"
 )
+
+// Failure injects a fault into the time simulation at AtS.
+//
+//	instance-loss: Count nodes (node pool), instances (VM group, standalone
+//	               service) or pods (Deployment) die. Controllers replace
+//	               what they manage; unmanaged instances return after
+//	               DurationS (0 = never).
+//	zone-outage:   one of Zones zones fails: every node pool, VM group and
+//	               service loses its share of instances, as instance-loss.
+//	outage:        Target fails every call for DurationS (0 = until the end).
+//	               Mode error fails fast; hang never answers, so callers wait
+//	               for their timeout.
+//	latency:       ExtraMs is added to every call of Target (a node or an
+//	               edge id) for DurationS (0 = until the end).
+//	failover:      the primary of datastore Target is unavailable for
+//	               DurationS (0 = the catalog's failoverS); replicas serve.
+type Failure struct {
+	Kind      string  `json:"kind"`
+	Target    string  `json:"target,omitempty"`
+	AtS       float64 `json:"atS"`
+	DurationS float64 `json:"durationS,omitempty"`
+	Count     int     `json:"count,omitempty"`
+	Zones     int     `json:"zones,omitempty"`
+	ExtraMs   float64 `json:"extraMs,omitempty"`
+	Mode      string  `json:"mode,omitempty"`
+}
+
+const (
+	FailInstanceLoss = "instance-loss"
+	FailZoneOutage   = "zone-outage"
+	FailOutage       = "outage"
+	FailLatency      = "latency"
+	FailFailover     = "failover"
+
+	ModeError = "error"
+	ModeHang  = "hang"
+
+	DefaultZones = 3
+)
+
+// Instances returns the instances an instance-loss failure kills.
+func (f Failure) Instances() int {
+	if f.Count > 0 {
+		return f.Count
+	}
+	return 1
+}
+
+// ZoneCount returns the zones a zone-outage assumes capacity is spread over.
+func (f Failure) ZoneCount() int {
+	if f.Zones > 0 {
+		return f.Zones
+	}
+	return DefaultZones
+}
+
+// OutageMode returns how a failed target behaves: error (default) or hang.
+func (f Failure) OutageMode() string {
+	if f.Mode != "" {
+		return f.Mode
+	}
+	return ModeError
+}
 
 type RequestClass struct {
 	Name   string  `json:"name"`
@@ -210,22 +304,45 @@ func (t *Timeline) TickSamples() int {
 // TPSAt returns the offered load at time t seconds.
 func (w Workload) TPSAt(t float64) float64 {
 	base := w.TargetTPS
-	if w.Timeline == nil || w.Timeline.Load == nil || w.Timeline.Load.Kind != LoadSpike {
+	if w.Timeline == nil || w.Timeline.Load == nil {
 		return base
 	}
 	p := w.Timeline.Load
 	up := p.StartS + p.RampS
-	down := up + p.HoldS
-	switch {
-	case t < p.StartS || t >= down+p.RampS:
+	switch p.Kind {
+	case LoadSpike:
+		down := up + p.HoldS
+		switch {
+		case t < p.StartS || t >= down+p.RampS:
+			return base
+		case t < up:
+			return base + (p.PeakTPS-base)*(t-p.StartS)/p.RampS
+		case t < down:
+			return p.PeakTPS
+		default:
+			return p.PeakTPS + (base-p.PeakTPS)*(t-down)/p.RampS
+		}
+	case LoadRamp:
+		switch {
+		case t < p.StartS:
+			return base
+		case t < up:
+			return base + (p.PeakTPS-base)*(t-p.StartS)/p.RampS
+		default:
+			return p.PeakTPS
+		}
+	case LoadStep:
+		if t >= p.StartS && (p.HoldS == 0 || t < p.StartS+p.HoldS) {
+			return p.PeakTPS
+		}
 		return base
-	case t < up:
-		return base + (p.PeakTPS-base)*(t-p.StartS)/p.RampS
-	case t < down:
-		return p.PeakTPS
-	default:
-		return p.PeakTPS + (base-p.PeakTPS)*(t-down)/p.RampS
+	case LoadDiurnal:
+		if t < p.StartS {
+			return base
+		}
+		return base + (p.PeakTPS-base)*(1-math.Cos(2*math.Pi*(t-p.StartS)/p.PeriodS))/2
 	}
+	return base
 }
 
 // Validate checks structure that does not need the catalog: identifiers,
@@ -313,6 +430,25 @@ func (a *Architecture) Validate() error {
 		if e.TimeoutMs < 0 {
 			add("%s: timeoutMs must be >= 0", ref)
 		}
+		if r := e.Retry; r != nil {
+			if r.Max < 0 || r.Max > MaxRetries {
+				add("%s: retry.max must be within [0, %d]", ref, MaxRetries)
+			}
+			if r.BackoffMs < 0 {
+				add("%s: retry.backoffMs must be >= 0", ref)
+			}
+			if r.BudgetPercent != nil && *r.BudgetPercent < 0 {
+				add("%s: retry.budgetPercent must be >= 0", ref)
+			}
+		}
+		if cb := e.CircuitBreaker; cb != nil {
+			if cb.FailureRatePercent < 0 || cb.FailureRatePercent > 100 {
+				add("%s: circuitBreaker.failureRatePercent must be within [0, 100]", ref)
+			}
+			if cb.WindowS < 0 || cb.MinCalls < 0 || cb.OpenS < 0 || cb.HalfOpenCalls < 0 {
+				add("%s: circuitBreaker windowS, minCalls, openS and halfOpenCalls must be >= 0", ref)
+			}
+		}
 		for _, c := range e.Classes {
 			if !classes[c] {
 				add("%s: class %q is not defined in workload.classes", ref, c)
@@ -346,16 +482,23 @@ func (a *Architecture) Validate() error {
 		if p := tl.Load; p != nil {
 			switch p.Kind {
 			case LoadConstant:
-			case LoadSpike:
+			case LoadSpike, LoadRamp, LoadStep, LoadDiurnal:
 				if !(p.PeakTPS > 0) {
 					add("workload.timeline.load.peakTps must be > 0")
 				}
 				if p.StartS < 0 || p.RampS < 0 || p.HoldS < 0 {
 					add("workload.timeline.load startS, rampS and holdS must be >= 0")
 				}
+				if p.Kind == LoadDiurnal && !(p.PeriodS > 0) {
+					add("workload.timeline.load.periodS must be > 0 for a diurnal pattern")
+				}
 			default:
-				add("workload.timeline.load.kind must be %s or %s, got %q", LoadConstant, LoadSpike, p.Kind)
+				add("workload.timeline.load.kind must be one of %s, %s, %s, %s, %s; got %q",
+					LoadConstant, LoadSpike, LoadRamp, LoadStep, LoadDiurnal, p.Kind)
 			}
+		}
+		for i, f := range tl.Failures {
+			validateFailure(fmt.Sprintf("workload.timeline.failures[%d]", i), f, add)
 		}
 	}
 	if w.SLO != nil {
@@ -367,4 +510,32 @@ func (a *Architecture) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// validateFailure checks fields and ranges; targets are resolved by the
+// engine, which knows edge ids and archetypes.
+func validateFailure(ref string, f Failure, add func(string, ...any)) {
+	if f.AtS < 0 || f.DurationS < 0 || f.Count < 0 || f.Zones < 0 || f.ExtraMs < 0 {
+		add("%s: atS, durationS, count, zones and extraMs must be >= 0", ref)
+	}
+	switch f.Kind {
+	case FailInstanceLoss, FailOutage, FailFailover:
+	case FailZoneOutage:
+		if f.Target != "" {
+			add("%s: zone-outage affects every zone-spread component; remove target", ref)
+		}
+	case FailLatency:
+		if !(f.ExtraMs > 0) {
+			add("%s: latency needs extraMs > 0", ref)
+		}
+	default:
+		add("%s: kind must be one of %s, %s, %s, %s, %s; got %q", ref,
+			FailInstanceLoss, FailZoneOutage, FailOutage, FailLatency, FailFailover, f.Kind)
+	}
+	if f.Kind != FailZoneOutage && f.Kind != "" && f.Target == "" {
+		add("%s: target is required", ref)
+	}
+	if f.Mode != "" && f.Mode != ModeError && f.Mode != ModeHang {
+		add("%s: mode must be %s or %s, got %q", ref, ModeError, ModeHang, f.Mode)
+	}
 }

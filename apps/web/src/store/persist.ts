@@ -8,6 +8,7 @@ export interface SavedDesign {
 }
 
 const STORAGE_KEY = 'archsim:design:v1'
+const BASELINE_KEY = 'archsim:baseline:v1'
 const HASH_PREFIX = '#d='
 // Share links are untrusted input: cap the inflated size so a crafted link
 // cannot exhaust memory (a design is a few KB; 2 MB is generous).
@@ -22,8 +23,26 @@ export function saveLocal(d: SavedDesign): void {
 }
 
 export function loadLocal(): SavedDesign | undefined {
+  return loadKey(STORAGE_KEY)
+}
+
+/** The pinned comparison baseline; null clears it. */
+export function saveBaseline(d: SavedDesign | null): void {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    if (d) localStorage.setItem(BASELINE_KEY, JSON.stringify(d))
+    else localStorage.removeItem(BASELINE_KEY)
+  } catch {
+    // As saveLocal: the baseline stays for this session only.
+  }
+}
+
+export function loadBaseline(): SavedDesign | undefined {
+  return loadKey(BASELINE_KEY)
+}
+
+function loadKey(key: string): SavedDesign | undefined {
+  try {
+    const raw = localStorage.getItem(key)
     return raw ? parseSaved(raw) : undefined
   } catch {
     return undefined

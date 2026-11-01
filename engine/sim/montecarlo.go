@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"archsim/engine/catalog"
+	"archsim/engine/model"
 )
 
 // The Monte Carlo pass samples synthetic requests through the call trees,
@@ -87,12 +88,30 @@ func (g *graph) monteCarlo(samples int, seed uint64, reject []float64, withAsync
 
 func (g *graph) sample(v *visit, s *sampler, acc *mcAcc, reject []float64) (float64, bool) {
 	n := v.node.idx
+	lv := g.live
+	if lv != nil {
+		mode := lv.down[n]
+		if mode == "" && v.st != nil && v.st == v.node.st {
+			mode = lv.primaryDown[n]
+		}
+		switch mode {
+		case model.ModeError:
+			return 0, true
+		case model.ModeHang:
+			return lv.hangMs, true
+		}
+	}
 	if s.bernoulli(reject[n]) {
 		return 0, true
 	}
 	t := 0.0
 	if st := v.st; st != nil && st.meanS > 0 {
-		w := s.wait(st.q) + st.fluidMs
+		// Requests arriving during a tick see the backlog grow (or drain)
+		// from its level at the start to its level at the end.
+		w := s.wait(st.q) + st.fluidLoMs
+		if st.fluidMs != st.fluidLoMs {
+			w += s.r.Float64() * (st.fluidMs - st.fluidLoMs)
+		}
 		svc := s.gamma(v.serviceMs/st.speed, v.cs2)
 		if acc.main {
 			acc.wait[n] += w
@@ -101,6 +120,9 @@ func (g *graph) sample(v *visit, s *sampler, acc *mcAcc, reject []float64) (floa
 		t += w + svc
 	}
 	d := s.gamma(v.delayMs, v.delayCs2)
+	if lv != nil {
+		d += lv.extraMs[n]
+	}
 	if acc.main {
 		acc.delay[n] += d
 	}
@@ -134,14 +156,7 @@ func (g *graph) sampleCall(c *call, s *sampler, acc *mcAcc, reject []float64) (f
 		if !s.bernoulli(c.e.prob) {
 			continue
 		}
-		d, failed := g.sample(c.child, s, acc, reject)
-		d += c.e.netMs
-		if to := c.e.m.TimeoutMs; to > 0 && d > to {
-			d, failed = to, true
-		}
-		if acc.main {
-			acc.net[c.e.idx] += c.e.netMs
-		}
+		d, failed := g.sampleAttempts(c, s, acc, reject)
 		acc.callMs[c.e.idx] += d
 		acc.callN[c.e.idx]++
 		if c.parallel {
@@ -154,6 +169,54 @@ func (g *graph) sampleCall(c *call, s *sampler, acc *mcAcc, reject []float64) (f
 		}
 	}
 	return total, false
+}
+
+// sampleAttempts makes one call over an edge. In the time simulation that
+// includes the circuit breaker's verdict and the retries of failed attempts.
+func (g *graph) sampleAttempts(c *call, s *sampler, acc *mcAcc, reject []float64) (float64, bool) {
+	e, lv := c.e, g.live
+	elapsed := 0.0
+	for k := 0; ; k++ {
+		pass := 1.0
+		if lv != nil {
+			pass = lv.pass[e.idx]
+		}
+		if pass == 0 {
+			return elapsed, true // breaker open: fail fast, not retried
+		}
+		d, failed := g.sample(c.child, s, acc, reject)
+		d += e.netMs
+		if lv != nil {
+			d += lv.extraNetMs[e.idx]
+		}
+		if to := e.m.TimeoutMs; to > 0 && d > to {
+			d, failed = to, true
+		}
+		if acc.main {
+			acc.net[e.idx] += e.netMs
+		}
+		if lv != nil {
+			i := c.child.idx
+			lv.att[i]++
+			if failed {
+				lv.fail[i]++
+				lv.failMs[i] += d
+			}
+		}
+		// Half-open: every sampled attempt measures the callee's health, but
+		// only the permitted share is really sent; the rest fail fast.
+		if pass < 1 && !s.bernoulli(pass) {
+			return elapsed, true
+		}
+		elapsed += d
+		if !failed {
+			return elapsed, false
+		}
+		if lv == nil || e.retry == nil || k >= e.retry.Max || !s.bernoulli(lv.retryOK[c.child.idx]) {
+			return elapsed, true
+		}
+		elapsed += backoffMs(e.retry, k+1)
+	}
 }
 
 // sampleAsync samples each async edge as its own pipeline, splitting the

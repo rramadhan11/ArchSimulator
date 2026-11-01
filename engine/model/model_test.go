@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -60,6 +61,53 @@ func TestValidateTimeline(t *testing.T) {
 	for _, want := range []string{"durationS", "load.kind"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("error %v does not mention %s", err, want)
+		}
+	}
+}
+
+func TestLoadPatterns(t *testing.T) {
+	cases := []struct {
+		p    LoadPattern
+		want map[float64]float64
+	}{
+		{LoadPattern{Kind: LoadRamp, PeakTPS: 500, StartS: 10, RampS: 4}, map[float64]float64{0: 100, 10: 100, 12: 300, 14: 500, 1000: 500}},
+		{LoadPattern{Kind: LoadStep, PeakTPS: 500, StartS: 10, HoldS: 5}, map[float64]float64{9: 100, 10: 500, 14.9: 500, 15: 100}},
+		{LoadPattern{Kind: LoadStep, PeakTPS: 500, StartS: 10}, map[float64]float64{9: 100, 10: 500, 1000: 500}},
+		{LoadPattern{Kind: LoadDiurnal, PeakTPS: 500, StartS: 10, PeriodS: 100}, map[float64]float64{0: 100, 10: 100, 35: 300, 60: 500, 110: 100}},
+	}
+	for _, c := range cases {
+		w := Workload{TargetTPS: 100, Timeline: &Timeline{Load: &c.p}}
+		for at, want := range c.want {
+			if got := w.TPSAt(at); math.Abs(got-want) > 1e-9 {
+				t.Errorf("%s: TPSAt(%v) = %v, want %v", c.p.Kind, at, got, want)
+			}
+		}
+	}
+}
+
+func TestValidateResilienceAndFailures(t *testing.T) {
+	neg := -1.0
+	a := &Architecture{
+		Version: SchemaVersion,
+		Nodes:   []Node{{ID: "c", Kind: "client.web"}, {ID: "s", Kind: "service.go"}},
+		Edges: []Edge{{From: "c", To: "s", Retry: &Retry{Max: MaxRetries + 1, BudgetPercent: &neg},
+			CircuitBreaker: &CircuitBreaker{FailureRatePercent: 150}}},
+		Workload: Workload{Entry: "c", TargetTPS: 1, Timeline: &Timeline{
+			Load: &LoadPattern{Kind: LoadDiurnal, PeakTPS: 2},
+			Failures: []Failure{
+				{Kind: FailZoneOutage, Target: "s"},
+				{Kind: FailLatency, Target: "s"},
+				{Kind: FailOutage},
+				{Kind: FailOutage, Target: "s", Mode: "slow"},
+				{Kind: "meteor", Target: "s"},
+			}}},
+	}
+	err := a.Validate()
+	for _, want := range []string{"retry.max", "budgetPercent", "failureRatePercent", "periodS",
+		"failures[0]: zone-outage", "failures[1]: latency needs extraMs", "failures[2]: target is required",
+		"failures[3]: mode", "failures[4]: kind"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q:\n%v", want, err)
 		}
 	}
 }

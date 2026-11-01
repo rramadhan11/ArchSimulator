@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { Archetype, Component, Config, ModelEdge, Param, RequestClass, Workload } from '../engine/types'
+import type { Archetype, CircuitBreaker, Component, Config, LoadKind, LoadPattern, ModelEdge, Param, RequestClass, Retry, Workload } from '../engine/types'
 import { latest, useDesign } from '../store/design'
-import { archetypeOf, getPath, setPath, type FlowEdge, type FlowNode } from '../store/model'
+import { archetypeOf, getPath, setPath, type EdgeData, type FlowEdge, type FlowNode } from '../store/model'
+import { FailuresEditor } from './FailuresEditor'
 import { Button, Chips, Field, fmtMs, NumberInput, Section, Select, SourceBadge, TextInput, Toggle, UtilBar } from '../ui/kit'
 import { ParamField } from './ParamField'
 
@@ -345,25 +346,90 @@ function EdgeInspector({ edge }: { edge: FlowEdge }) {
         </Field>
       </Section>
 
-      <Section title="Resilience">
-        <Field label="timeoutMs (ms)" hint="A call slower than this fails the request.">
-          {(id) => <NumberInput id={id} value={d.timeoutMs} min={0} placeholder="none" onCommit={(v) => up({ timeoutMs: v })} />}
-        </Field>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="retry.max">
-            {(id) => <NumberInput id={id} value={d.retry?.max} min={0} placeholder="0" onCommit={(v) => up({ retry: v ? { max: Math.round(v), backoffMs: d.retry?.backoffMs ?? 0 } : undefined })} />}
-          </Field>
-          <Field label="retry.backoffMs">
-            {(id) => <NumberInput id={id} value={d.retry?.backoffMs} min={0} placeholder="0" onCommit={(v) => d.retry && up({ retry: { ...d.retry, backoffMs: v ?? 0 } })} />}
-          </Field>
-        </div>
-        <p className="text-[11px] text-warn">Retries are saved with the design but not simulated yet (planned for Phase 2).</p>
-      </Section>
+      <Resilience d={d} up={up} />
     </>
   )
 }
 
+/** Timeout, retry and circuit breaker of an edge. Retries and breakers act in the time simulation only. */
+function Resilience({ d, up }: { d: EdgeData; up: (patch: Partial<ModelEdge>) => void }) {
+  const retry = d.retry
+  const cb = d.circuitBreaker
+  const setRetry = (patch: Partial<Retry>) => {
+    const next = { max: retry?.max ?? 0, backoffMs: retry?.backoffMs ?? 0, ...retry, ...patch }
+    if (next.budgetPercent === undefined) delete next.budgetPercent
+    up({ retry: next.max > 0 ? next : undefined })
+  }
+  const setCb = (patch: Partial<CircuitBreaker>) => {
+    const next: CircuitBreaker = { ...cb, ...patch }
+    for (const k of Object.keys(next) as (keyof CircuitBreaker)[]) if (next[k] === undefined) delete next[k]
+    up({ circuitBreaker: next })
+  }
+  const cbField = (key: keyof CircuitBreaker, label: string, def: number, hint?: string) => (
+    <Field label={label} hint={hint}>
+      {(id) => <NumberInput id={id} value={cb?.[key]} min={0} placeholder={String(def)} onCommit={(v) => setCb({ [key]: v })} />}
+    </Field>
+  )
+  return (
+    <Section title="Resilience">
+      <Field label="timeoutMs (ms)" hint="Per attempt: a slower call fails (and may be retried).">
+        {(id) => <NumberInput id={id} value={d.timeoutMs} min={0} placeholder="none" onCommit={(v) => up({ timeoutMs: v })} />}
+      </Field>
+      <div className="grid grid-cols-3 gap-2">
+        <Field label="retry.max">{(id) => <NumberInput id={id} value={retry?.max} min={0} max={10} placeholder="0" onCommit={(v) => setRetry({ max: Math.round(v ?? 0) })} />}</Field>
+        <Field label="backoffMs">{(id) => <NumberInput id={id} value={retry?.backoffMs} min={0} placeholder="0" onCommit={(v) => retry && setRetry({ backoffMs: v ?? 0 })} />}</Field>
+        <Field label="budget %">{(id) => <NumberInput id={id} value={retry?.budgetPercent} min={0} placeholder="none" onCommit={(v) => retry && setRetry({ budgetPercent: v })} />}</Field>
+      </div>
+      <p className="text-[11px] text-muted">
+        Wait before retry k is backoff·2<sup>k-1</sup>. The budget caps retries at a share of first attempts; without one, a failing callee gets up to {(retry?.max ?? 0) + 1}× its load.
+      </p>
+      <Toggle checked={cb !== undefined} onChange={(on) => up({ circuitBreaker: on ? {} : undefined })} label="Circuit breaker" />
+      {cb && (
+        <div className="grid grid-cols-2 gap-2">
+          {cbField('failureRatePercent', 'opens at fail %', 50)}
+          {cbField('windowS', 'windowS (s)', 10)}
+          {cbField('minCalls', 'minCalls', 100, 'Calls in the window before it can open.')}
+          {cbField('openS', 'openS (s)', 60, 'Fail fast this long, then probe.')}
+          {cbField('halfOpenCalls', 'probe calls/s', 10)}
+        </div>
+      )}
+      <p className="text-[11px] text-muted">Retries and the breaker act in the time simulation; the quick check treats a failed call as final.</p>
+    </Section>
+  )
+}
+
 // ---------------------------------------------------------------- workload
+
+const LOAD_HINTS: Record<LoadKind, string> = {
+  constant: 'targetTps throughout.',
+  spike: 'Ramp from targetTps to peakTps at startS, hold, ramp back down.',
+  ramp: 'Ramp from targetTps to peakTps at startS, then stay there.',
+  step: 'Jump to peakTps at startS for holdS (empty = until the end).',
+  diurnal: 'Cosine wave from targetTps to peakTps and back every periodS (usually a compressed day; scaling delays stay real-time).',
+}
+
+const LOAD_FIELDS: Record<Exclude<LoadKind, 'constant'>, (keyof Omit<LoadPattern, 'kind'>)[]> = {
+  spike: ['peakTps', 'startS', 'rampS', 'holdS'],
+  ramp: ['peakTps', 'startS', 'rampS'],
+  step: ['peakTps', 'startS', 'holdS'],
+  diurnal: ['peakTps', 'startS', 'periodS'],
+}
+
+function defaultLoad(kind: LoadKind, base: number, durationS: number): LoadPattern | undefined {
+  const peakTps = base * 3
+  switch (kind) {
+    case 'constant':
+      return undefined
+    case 'spike':
+      return { kind, peakTps, startS: 60, rampS: 10, holdS: 120 }
+    case 'ramp':
+      return { kind, peakTps, startS: 60, rampS: 240 }
+    case 'step':
+      return { kind, peakTps, startS: 60 }
+    case 'diurnal':
+      return { kind, peakTps, periodS: durationS }
+  }
+}
 
 function WorkloadInspector() {
   const w = useDesign((s) => s.workload)
@@ -413,32 +479,31 @@ function WorkloadInspector() {
         </div>
       </Section>
       <Section title="Time simulation">
-        <Field label="load pattern">
+        <Field label="load pattern" hint={LOAD_HINTS[load.kind]}>
           {(id) => (
             <Select
               id={id}
               value={load.kind}
-              options={[
-                { value: 'constant', label: 'constant (targetTps)' },
-                { value: 'spike', label: 'spike' },
-              ]}
-              onChange={(kind) => setTimeline({ load: kind === 'spike' ? { kind, peakTps: w.targetTps * 3, startS: 60, rampS: 10, holdS: 120 } : undefined })}
+              options={(Object.keys(LOAD_HINTS) as LoadKind[]).map((k) => ({ value: k, label: k === 'constant' ? 'constant (targetTps)' : k }))}
+              onChange={(kind) => setTimeline({ load: defaultLoad(kind as LoadKind, w.targetTps, tl.durationS ?? 600) })}
             />
           )}
         </Field>
-        {load.kind === 'spike' && (
+        {load.kind !== 'constant' && (
           <div className="grid grid-cols-2 gap-2">
-            <Field label="peakTps">{(id) => <NumberInput id={id} value={load.peakTps} min={0.001} onCommit={(v) => setTimeline({ load: { ...load, peakTps: v } })} />}</Field>
-            <Field label="startS (s)">{(id) => <NumberInput id={id} value={load.startS} min={0} placeholder="0" onCommit={(v) => setTimeline({ load: { ...load, startS: v } })} />}</Field>
-            <Field label="rampS (s)">{(id) => <NumberInput id={id} value={load.rampS} min={0} placeholder="0" onCommit={(v) => setTimeline({ load: { ...load, rampS: v } })} />}</Field>
-            <Field label="holdS (s)">{(id) => <NumberInput id={id} value={load.holdS} min={0} placeholder="0" onCommit={(v) => setTimeline({ load: { ...load, holdS: v } })} />}</Field>
+            {LOAD_FIELDS[load.kind].map((f) => (
+              <Field key={f} label={f.endsWith('S') ? `${f} (s)` : f}>
+                {(id) => <NumberInput id={id} value={load[f]} min={f === 'peakTps' || f === 'periodS' ? 0.001 : 0} placeholder={f === 'holdS' && load.kind === 'step' ? 'until end' : '0'} onCommit={(v) => setTimeline({ load: { ...load, [f]: v } })} />}
+              </Field>
+            ))}
           </div>
         )}
         <div className="grid grid-cols-2 gap-2">
           <Field label="durationS (s)">{(id) => <NumberInput id={id} value={tl.durationS} min={1} max={3600} placeholder="600" onCommit={(v) => setTimeline({ durationS: v === undefined ? undefined : Math.round(v) })} />}</Field>
-          <Field label="queueTimeoutMs">{(id) => <NumberInput id={id} value={tl.queueTimeoutMs} min={0} placeholder="30000" onCommit={(v) => setTimeline({ queueTimeoutMs: v })} />}</Field>
+          <Field label="queueTimeoutMs" hint="Clients give up on queued requests after this (also how long a hung call lasts).">{(id) => <NumberInput id={id} value={tl.queueTimeoutMs} min={0} placeholder="30000" onCommit={(v) => setTimeline({ queueTimeoutMs: v })} />}</Field>
         </div>
       </Section>
+      <FailuresEditor failures={tl.failures} onChange={(failures) => setTimeline({ failures: failures.length ? failures : undefined })} />
       <Section title="Sampling" defaultOpen={false}>
         <div className="grid grid-cols-2 gap-2">
           <Field label="samples" hint="Monte Carlo requests (quick check).">{(id) => <NumberInput id={id} value={w.samples} min={100} placeholder="20000" onCommit={(v) => updateWorkload({ samples: v === undefined ? undefined : Math.round(v) })} />}</Field>
