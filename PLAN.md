@@ -49,6 +49,14 @@ Bagian ini **mengalahkan** isi bagian lain jika bertentangan.
 - **Compare:** "Pin baseline" menyimpan salinan desain (localStorage). Quick check dan time simulation dijalankan ulang pada salinan itu dan ditampilkan berdampingan dengan desain saat ini (tabel selisih, garis putus-putus abu-abu di grafik).
 - **Belum:** memory pressure (OOM, eviction); thread/koneksi caller yang tertahan menunggu dependency yang hang; quick check tetap tidak memodelkan retry. **Lab kalibrasi v1 (kind + k6) sudah disiapkan di `lab/` tapi belum dijalankan** (direncanakan di VPS), jadi exit criterion Fase 2 (HPA cocok dengan eksperimen nyata) belum terbukti.
 
+**Catatan implementasi Fase 3 (November 2026)**
+- **Arah: tool pribadi dulu.** Login tetap single-user. Akun multi-user, workspace, kuota, billing, landing page, dan analytics ditunda sampai ArchSim siap dibuka ke publik.
+- **Desain tersimpan di server dengan riwayat versi** (`/api/designs`). Disimpan sebagai file JSON di `ARCHSIM_DATA_DIR`, satu file per versi dan tidak pernah diubah. Penulisan atomik (temp file, fsync, rename), jadi backup cukup dengan menyalin direktori. Database belum perlu untuk satu pengguna dengan desain berukuran beberapa KB. Simpan berisi sama dengan versi terakhir tidak membuat versi baru. API memeriksa Origin dan Content-Type JSON (perlindungan CSRF), membatasi body 2 MB, dan memvalidasi id agar tidak bisa path traversal.
+- **Editor:** tombol Save (Ctrl/Cmd+S) dengan status perubahan yang belum tersimpan; dialog Designs berisi desain tersimpan, riwayat versi (buka atau bandingkan versi mana pun sebagai baseline), dan galeri template. Draft lokal tetap ter-autosave dan tetap terhubung ke desain server-nya setelah reload.
+- **Laporan:** halaman HTML mandiri tanpa script, siap dicetak atau disimpan sebagai PDF lewat browser. Isinya desain, quick check, time simulation (grafik SVG), perbandingan dengan baseline, dan semua asumsi beserta sumbernya. Semua nilai dari desain di-escape.
+- **Halaman metodologi** ("How it works") di dalam app: formula, langkah simulasi, sumber parameter, skor confidence, batasan, dan status validasi.
+- **Berikutnya:** deploy ke VPS (domain, HTTPS, service, backup `data/`), lalu menjalankan lab kalibrasi di sana.
+
 ---
 
 ## 1. Ringkasan Eksekutif

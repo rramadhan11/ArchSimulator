@@ -1,5 +1,5 @@
 // Small UI primitives shared by the panels.
-import { useEffect, useId, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import type { Source, SourceKind, Verdict } from '../engine/types'
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
@@ -22,6 +22,37 @@ export function Button({ variant = 'default', className, ...rest }: ButtonProps)
       )}
       {...rest}
     />
+  )
+}
+
+/** A modal on the native <dialog> element: focus trap and Escape to close come with it. */
+export function Dialog({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const d = ref.current
+    if (!d) return
+    if (open && !d.open) d.showModal()
+    if (!open && d.open) d.close()
+  }, [open])
+  return (
+    <dialog
+      ref={ref}
+      onClose={onClose}
+      onClick={(e) => e.target === ref.current && onClose()} // backdrop click
+      className={cx('m-auto max-h-[85vh] rounded-xl border border-line bg-panel p-0 text-fg shadow-2xl backdrop:bg-black/40', wide ? 'w-[min(920px,94vw)]' : 'w-[min(560px,94vw)]')}
+    >
+      {open && (
+        <div className="flex max-h-[85vh] flex-col">
+          <div className="flex items-center border-b border-line px-4 py-3">
+            <h2 className="flex-1 text-[14px] font-semibold">{title}</h2>
+            <button type="button" className="px-1 text-[16px] text-muted hover:text-fg" onClick={onClose} aria-label="Close">
+              ×
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        </div>
+      )}
+    </dialog>
   )
 }
 

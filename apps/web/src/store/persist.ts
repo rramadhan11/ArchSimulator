@@ -9,6 +9,15 @@ export interface SavedDesign {
 
 const STORAGE_KEY = 'archsim:design:v1'
 const BASELINE_KEY = 'archsim:baseline:v1'
+const SERVER_LINK_KEY = 'archsim:server-link:v1'
+
+/** Which saved design (and version) the local draft continues, if any. */
+export interface ServerLink {
+  id: string
+  version: number
+  /** The design as last saved, to tell whether there are unsaved changes. */
+  savedKey: string
+}
 const HASH_PREFIX = '#d='
 // Share links are untrusted input: cap the inflated size so a crafted link
 // cannot exhaust memory (a design is a few KB; 2 MB is generous).
@@ -34,6 +43,25 @@ export function saveBaseline(d: SavedDesign | null): void {
   } catch {
     // As saveLocal: the baseline stays for this session only.
   }
+}
+
+export function saveServerLink(link: ServerLink | null): void {
+  try {
+    if (link) localStorage.setItem(SERVER_LINK_KEY, JSON.stringify(link))
+    else localStorage.removeItem(SERVER_LINK_KEY)
+  } catch {
+    // As saveLocal.
+  }
+}
+
+export function loadServerLink(): ServerLink | undefined {
+  try {
+    const v = JSON.parse(localStorage.getItem(SERVER_LINK_KEY) ?? 'null') as Partial<ServerLink> | null
+    if (v && typeof v.id === 'string' && typeof v.version === 'number' && typeof v.savedKey === 'string') return v as ServerLink
+  } catch {
+    // Unreadable: the draft is simply not linked.
+  }
+  return undefined
 }
 
 export function loadBaseline(): SavedDesign | undefined {

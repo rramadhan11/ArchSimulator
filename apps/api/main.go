@@ -36,6 +36,7 @@ const (
 type config struct {
 	addr         string
 	webDir       string
+	dataDir      string
 	username     string
 	passwordHash []byte
 	secret       []byte
@@ -67,6 +68,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg := config{
 		addr:     envOr(getenv, "ARCHSIM_ADDR", ":8080"),
 		webDir:   envOr(getenv, "ARCHSIM_WEB_DIR", "apps/web/dist"),
+		dataDir:  envOr(getenv, "ARCHSIM_DATA_DIR", "data"),
 		username: getenv("ARCHSIM_USERNAME"),
 		secret:   []byte(getenv("ARCHSIM_SESSION_SECRET")),
 	}
@@ -102,7 +104,11 @@ func envOr(getenv func(string) string, key, def string) string {
 	return def
 }
 
-func newHandler(cfg config) http.Handler {
+func newHandler(cfg config) (http.Handler, error) {
+	designs, err := newStore(cfg.dataDir)
+	if err != nil {
+		return nil, err
+	}
 	a := &auth{
 		username: cfg.username, passwordHash: cfg.passwordHash, secret: cfg.secret, ttl: cfg.ttl,
 		secureCookie: cfg.secureCookie, trustProxy: cfg.trustProxy,
@@ -114,13 +120,15 @@ func newHandler(cfg config) http.Handler {
 
 	private := http.NewServeMux()
 	private.HandleFunc("/logout", a.handleLogout)
+	designRoutes(private, designs)
+	private.Handle("/api/", http.NotFoundHandler()) // unknown API routes are not SPA pages
 	private.Handle("/", spa(os.DirFS(cfg.webDir)))
 
 	root := http.NewServeMux()
 	root.Handle("/login", public)
 	root.Handle("/healthz", public)
 	root.Handle("/", a.require(private))
-	return securityHeaders(root)
+	return securityHeaders(root), nil
 }
 
 // appCSP allows only same-origin code plus WebAssembly compilation (the
@@ -213,9 +221,13 @@ func serveGzipped(w http.ResponseWriter, r *http.Request, fsys fs.FS, name strin
 }
 
 func serve(cfg config) error {
+	handler, err := newHandler(cfg)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
 		Addr:              cfg.addr,
-		Handler:           newHandler(cfg),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -228,7 +240,7 @@ func serve(cfg config) error {
 	defer stop()
 	errc := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", cfg.addr, "webDir", cfg.webDir)
+		slog.Info("listening", "addr", cfg.addr, "webDir", cfg.webDir, "dataDir", cfg.dataDir)
 		errc <- srv.ListenAndServe()
 	}()
 	select {

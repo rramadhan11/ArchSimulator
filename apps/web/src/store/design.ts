@@ -23,7 +23,8 @@ import {
   type FlowNode,
   type NodeData,
 } from './model'
-import { saveBaseline, saveLocal, type SavedDesign } from './persist'
+import { saveBaseline, saveLocal, saveServerLink, type SavedDesign, type ServerLink } from './persist'
+import { server } from './server'
 
 export type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null
 
@@ -58,8 +59,15 @@ interface DesignState {
   check: Status<Result>
   timeline: Status<Timeline>
   baseline: Baseline | null
+  /** The server design this draft continues; null for an unsaved design. */
+  server: ServerLink | null
 
-  load(d: SavedDesign): void
+  /** Loads a design; link it when it comes from the server. */
+  load(d: SavedDesign, link?: { id: string; version: number }): void
+  /** Saves a new server version (creating the design on first save). */
+  saveToServer(note?: string): Promise<void>
+  /** Restores the link of a reloaded draft; null unlinks (the saved design was deleted). */
+  relink(link: ServerLink | null): void
   /** Pins d (default: the current design) as the comparison baseline. */
   pinBaseline(d?: SavedDesign): void
   clearBaseline(): void
@@ -93,11 +101,22 @@ export const useDesign = create<DesignState>()((set, get) => ({
   check: { state: 'idle' },
   timeline: { state: 'idle' },
   baseline: null,
+  server: null,
 
-  load(d) {
+  load(d, link) {
     const { nodes, edges, workload } = fromArchitecture(d.architecture, get().catalog)
     set({ name: d.name, nodes, edges, workload, selection: null, check: { state: 'idle' }, timeline: { state: 'idle' } })
+    setServerLink(link ? { ...link, savedKey: designKey() } : null)
   },
+
+  async saveToServer(note) {
+    const d = savedDesign()
+    const link = get().server
+    const meta = link ? await server.save(link.id, d, note) : await server.create(d, note)
+    setServerLink({ id: meta.id, version: meta.versions, savedKey: JSON.stringify(d) })
+  },
+
+  relink: (link) => setServerLink(link),
 
   pinBaseline(d = savedDesign()) {
     const saved = structuredClone(d)
@@ -324,6 +343,16 @@ export function dropTarget(kind: string, candidates: FlowNode[], excludeId?: str
     const parent = archetypeOf(catalog, c.data.kind)
     return c.id !== excludeId && parent !== undefined && canContain(parent, child, kids(c.id))
   })
+}
+
+function setServerLink(link: ServerLink | null) {
+  saveServerLink(link)
+  useDesign.setState({ server: link })
+}
+
+/** Identity of the current design for unsaved-change detection (layout included). */
+export function designKey(): string {
+  return JSON.stringify(savedDesign())
 }
 
 /** Snapshot for autosave/export/share. */

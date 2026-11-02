@@ -34,9 +34,18 @@ func testConfig(t *testing.T) config {
 		t.Fatal(err)
 	}
 	return config{
-		webDir: dir, username: testUser, passwordHash: hash,
+		webDir: dir, dataDir: t.TempDir(), username: testUser, passwordHash: hash,
 		secret: []byte(strings.Repeat("s", 32)), ttl: time.Hour, secureCookie: true,
 	}
+}
+
+func mustHandler(t *testing.T, cfg config) http.Handler {
+	t.Helper()
+	h, err := newHandler(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
 }
 
 func testAuth() *auth {
@@ -97,7 +106,7 @@ func postLogin(h http.Handler, user, pass string, header http.Header) *httptest.
 }
 
 func TestLoginFlow(t *testing.T) {
-	h := newHandler(testConfig(t))
+	h := mustHandler(t, testConfig(t))
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/designs", nil))
@@ -139,7 +148,7 @@ func TestLoginFlow(t *testing.T) {
 }
 
 func TestLoginRejectsCrossOrigin(t *testing.T) {
-	h := newHandler(testConfig(t))
+	h := mustHandler(t, testConfig(t))
 	rec := postLogin(h, testUser, testPassword, http.Header{"Origin": {"https://evil.example"}})
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin login: %d, want 403", rec.Code)
@@ -147,7 +156,7 @@ func TestLoginRejectsCrossOrigin(t *testing.T) {
 }
 
 func TestLoginRateLimit(t *testing.T) {
-	h := newHandler(testConfig(t))
+	h := mustHandler(t, testConfig(t))
 	for range loginMaxFailures {
 		postLogin(h, testUser, "wrong", nil)
 	}
@@ -181,7 +190,7 @@ func TestServesPrecompressedAssets(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := newHandler(cfg)
+	h := mustHandler(t, cfg)
 	login := postLogin(h, testUser, testPassword, nil)
 	cookie := login.Result().Cookies()[0]
 

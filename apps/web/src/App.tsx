@@ -1,13 +1,15 @@
 import { ReactFlowProvider } from '@xyflow/react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Canvas } from './canvas/Canvas'
+import { DesignsDialog, type DesignsTab } from './panels/DesignsDialog'
 import { Inspector } from './panels/Inspector'
+import { Methodology } from './panels/Methodology'
 import { Palette } from './panels/Palette'
 import { QuickCheck } from './panels/QuickCheck'
 import { TimelineView } from './panels/TimelineView'
-import { latest, savedDesign, useDesign } from './store/design'
+import { designKey, latest, savedDesign, useDesign } from './store/design'
+import { buildReport } from './report/report'
 import { encodeShare, parseSaved } from './store/persist'
-import { templates } from './store/templates'
 import { Button, cx, fmt, verdictStyle } from './ui/kit'
 
 export function App() {
@@ -29,6 +31,8 @@ function TopBar() {
   const name = useDesign((s) => s.name)
   const fileInput = useRef<HTMLInputElement>(null)
   const [note, setNote] = useState<string>()
+  const [dialog, setDialog] = useState<DesignsTab | null>(null)
+  const [method, setMethod] = useState(false)
   const flash = (msg: string) => {
     setNote(msg)
     setTimeout(() => setNote(undefined), 2500)
@@ -52,6 +56,24 @@ function TopBar() {
     } catch (e) {
       flash(`Import failed: ${e instanceof Error ? e.message : String(e)}`)
     }
+  }
+
+  const report = () => {
+    const s = useDesign.getState()
+    const d = savedDesign()
+    const b = s.baseline
+    const html = buildReport({
+      name: d.name,
+      architecture: d.architecture,
+      check: latest(s.check),
+      timeline: latest(s.timeline),
+      baseline: b ? { name: b.saved.name, check: latest(b.check), timeline: latest(b.timeline) } : undefined,
+      generatedAt: new Date(),
+    })
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    if (!latest(s.timeline)) flash('Report opened. Run the time simulation first to include it.')
   }
 
   const share = async () => {
@@ -78,24 +100,14 @@ function TopBar() {
       <span className="max-w-[260px] truncate text-[13px] font-medium" title="Rename under Workload (click the empty canvas)">
         {name}
       </span>
-      <select
-        className="h-7 rounded-md border border-line bg-panel px-2 text-[12px]"
-        value=""
-        onChange={(e) => {
-          const t = templates.find((x) => x.id === e.target.value)
-          if (t && confirm(`Replace the current design with “${t.title}”? Export it first if you want to keep it.`)) {
-            useDesign.getState().load(t.design())
-            history.replaceState(null, '', location.pathname)
-          }
-        }}
-      >
-        <option value="">New from template…</option>
-        {templates.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.title}
-          </option>
-        ))}
-      </select>
+      <SaveButton flash={flash} />
+      <Button variant="ghost" onClick={() => setDialog('saved')}>
+        Designs
+      </Button>
+      <Button variant="ghost" onClick={() => setDialog('templates')}>
+        New…
+      </Button>
+      <DesignsDialog open={dialog !== null} tab={dialog ?? 'saved'} onTab={setDialog} onClose={() => setDialog(null)} />
       <div className="ml-auto flex items-center gap-1.5">
         {note && <span className="mr-2 text-[11.5px] text-muted">{note}</span>}
         <input ref={fileInput} type="file" accept="application/json,.json" className="hidden" onChange={(e) => e.target.files?.[0] && void importFile(e.target.files[0])} />
@@ -105,8 +117,15 @@ function TopBar() {
         <Button variant="ghost" onClick={exportFile}>
           Export
         </Button>
+        <Button variant="ghost" onClick={report} title="Printable report of the design and its latest results (print to PDF)">
+          Report
+        </Button>
         <Button onClick={() => void share()}>Share link</Button>
         <BaselineControl onPinned={() => flash('Pinned as baseline: results now show this version next to your edits')} />
+        <Button variant="ghost" onClick={() => setMethod(true)}>
+          How it works
+        </Button>
+        <Methodology open={method} onClose={() => setMethod(false)} />
         <form method="post" action="/logout">
           <Button type="submit" variant="ghost" title="Sign out">
             Sign out
@@ -137,6 +156,47 @@ function BaselineControl({ onPinned }: { onPinned: () => void }) {
         ×
       </button>
     </span>
+  )
+}
+
+/** Saves a new server version; shows whether there are unsaved changes. Ctrl/Cmd+S. */
+function SaveButton({ flash }: { flash: (msg: string) => void }) {
+  const link = useDesign((s) => s.server)
+  const dirty = useDesign((s) => s.server === null || designKey() !== s.server.savedKey)
+  const [saving, setSaving] = useState(false)
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await useDesign.getState().saveToServer()
+      flash(`Saved as version ${useDesign.getState().server?.version}`)
+    } catch (e) {
+      flash(`Not saved: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+  const saveRef = useRef(save)
+  saveRef.current = save
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        void saveRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  return (
+    <Button
+      variant={dirty ? 'default' : 'ghost'}
+      onClick={() => void save()}
+      disabled={saving}
+      title={link ? `Version ${link.version} on the server (Ctrl/Cmd+S saves a new version)` : 'Save to the server with version history (Ctrl/Cmd+S)'}
+    >
+      {saving ? 'Saving…' : !link ? 'Save' : dirty ? `Save · v${link.version} + edits` : `Saved v${link.version}`}
+    </Button>
   )
 }
 

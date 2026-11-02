@@ -26,7 +26,10 @@ Product & technical plan: [PLAN.md](PLAN.md) (section 0 lists the v1.1 decisions
   - retries (backoff, retry budget) and circuit breakers, so retry storms show up
 - **Failure injection**: lose nodes, pods or VMs, a whole zone, or a dependency (failing
   fast or hanging); add latency to a component or edge; fail a database over.
-- **Compare**: pin a baseline and see the quick check and timeline of later edits next to it.
+- **Compare**: pin a baseline (or any saved version) and see the quick check and timeline of later
+  edits next to it.
+- **Saved designs with version history** on the server, a template gallery, a printable report
+  (save as PDF from the browser) and a methodology page explaining every formula and limit.
 - **Local-first designs**: autosave in the browser, JSON import/export (same format as the
   CLI), and share links that carry the compressed design in the URL hash.
 - **Single-user login** in front of everything, so a public deployment is not open to
@@ -58,7 +61,7 @@ the browser, and the Go server only serves the app and handles login.
 | `engine/catalog/data/` | Component catalog: every default carries a source |
 | `engine/examples/` | Example designs: test fixtures and the web app's templates |
 | `apps/web/` | React + React Flow editor, ECharts charts, zustand store |
-| `apps/api/` | Go server: single-user login, CSP, gzip, in front of the built web app |
+| `apps/api/` | Go server: single-user login, design storage with versions (`/api/designs`), CSP, gzip, in front of the built web app |
 | `lab/` | Calibration lab: a reference service, HPA and k6 spike in kind, compared with ArchSim's simulation ([lab/README.md](lab/README.md)) |
 
 ## Getting started
@@ -101,9 +104,13 @@ make build && make run-api
 
 See `.env.example` for all settings.
 
-## Designs are local-first
+## Designs
 
-- Designs autosave in the browser (localStorage).
+- **Save** (Ctrl/Cmd+S) stores the design on the server as a new version; **Designs** lists saved
+  designs, their version history (open or compare any version) and the templates. Versions are JSON
+  files under `ARCHSIM_DATA_DIR` (default `data/`, one directory per design): back up that
+  directory. Saving content identical to the latest version does not create a new one.
+- The working copy also autosaves in the browser (localStorage), so a reload keeps unsaved edits.
 - **Export** downloads the design JSON, the same format the CLI reads. Canvas positions
   live under `ui`, which the engine ignores.
 - **Share link** puts the whole design, compressed, in the URL hash. Nothing is stored on

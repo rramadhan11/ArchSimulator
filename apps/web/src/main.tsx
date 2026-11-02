@@ -4,12 +4,12 @@ import { App } from './App'
 import { engine } from './engine/client'
 import './index.css'
 import { startAutoEffects, useDesign } from './store/design'
-import { decodeShare, loadBaseline, loadLocal, type SavedDesign } from './store/persist'
+import { decodeShare, loadBaseline, loadLocal, loadServerLink, type SavedDesign } from './store/persist'
 import { templates } from './store/templates'
 
 const root = createRoot(document.getElementById('root')!)
 
-async function initialDesign(): Promise<{ design: SavedDesign; warning?: string }> {
+async function initialDesign(): Promise<{ design: SavedDesign; draft?: boolean; warning?: string }> {
   try {
     const shared = await decodeShare(location.hash)
     if (shared) return { design: shared }
@@ -18,7 +18,7 @@ async function initialDesign(): Promise<{ design: SavedDesign; warning?: string 
     return { design: fallback, warning: `The share link could not be opened: ${e instanceof Error ? e.message : String(e)}` }
   }
   const local = loadLocal()
-  if (local) return { design: local }
+  if (local) return { design: local, draft: true }
   return { design: (templates.find((t) => t.id === 'k8s-kong-microservices') ?? templates[0]).design() }
 }
 
@@ -27,8 +27,12 @@ async function boot() {
   try {
     const catalog = await engine.catalog()
     useDesign.setState({ catalog })
-    const { design, warning } = await initialDesign()
+    const { design, draft, warning } = await initialDesign()
+    // The local draft keeps its link to the saved design it continues; read
+    // it before load(), which resets the link. Share links start unlinked.
+    const link = draft ? loadServerLink() : undefined
     useDesign.getState().load(design)
+    if (link) useDesign.getState().relink(link)
     startAutoEffects()
     void useDesign.getState().runCheck()
     const baseline = loadBaseline()

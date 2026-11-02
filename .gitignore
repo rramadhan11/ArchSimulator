@@ -1,5 +1,6 @@
 .env
 /bin/
+/data/
 apps/web/dist/
 node_modules/
 *.test
