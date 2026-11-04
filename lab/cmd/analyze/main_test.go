@@ -27,7 +27,7 @@ func TestAnalyzeSyntheticRun(t *testing.T) {
 	}
 	write(t, dir, "k6.csv", k6.String())
 	write(t, dir, "pods.csv", "999,1,1\n1000,1,1\n1001,,2\n1002,2,2\n")
-	write(t, dir, "sim.json", `{"ticks": [
+	write(t, dir, "sim.json", `{"tickS": 1, "ticks": [
 	  {"t": 0, "offeredTps": 2, "errorRate": 0, "latency": {"p99Ms": 11}, "replicas": [{"desired": 1, "ready": 1}]},
 	  {"t": 1, "offeredTps": 3, "errorRate": 0.5, "latency": {"p99Ms": 800}, "replicas": [{"desired": 1, "ready": 1}]},
 	  {"t": 2, "offeredTps": 1, "errorRate": 0, "latency": {"p99Ms": 14}, "replicas": [{"desired": 2, "ready": 2}]}]}`)

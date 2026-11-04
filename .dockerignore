@@ -1,0 +1,11 @@
+.git
+.env
+**/.env
+bin
+data
+deploy
+lab
+**/node_modules
+apps/web/dist
+apps/web/public/engine.wasm
+apps/web/src/engine/wasm_exec.js

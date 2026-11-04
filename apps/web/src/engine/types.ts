@@ -242,6 +242,8 @@ export interface Report {
   resources: ResourceReport[] | null
   hops: HopReport[] | null
   async?: { edge: string; p50Ms: number; p99Ms: number }[]
+  /** First-attempt calls per second each edge carries at the target TPS. */
+  edges?: { edge: string; callsPerS: number }[]
   replicas?: ReplicaReport[]
   nodePools?: PoolReport[]
   issues?: Issue[]

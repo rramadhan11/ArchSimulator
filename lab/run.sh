@@ -42,10 +42,19 @@ cat <<INFO
 This will:
   - create kind cluster "$CLUSTER" (one node) and install metrics-server
   - build and load the reference service image ($IMAGE)
-  - run k6 for ~8 minutes: 30 req/s, spike to 120 req/s (pods use at most 6 x 0.25 CPU)
-Docker currently has $cpus CPU / ~${mem_gib} GiB; the lab stays within that.
+  - run k6 for ~8 minutes: 30 req/s, spike to 120 req/s (pods use at most 4 x 0.25 CPU)
+Docker has $cpus CPU / ~${mem_gib} GiB. The lab needs ~2 GiB and requests ~2 CPU
+(~1 for Kubernetes' own pods, 1 for the service), and uses ~1-1.2 CPU at the peak.
 Delete everything afterwards with: $0 clean
 INFO
+if [ "$cpus" -lt 2 ]; then
+  echo "need at least 2 CPU: the service's pods would not all fit on the node" >&2
+  exit 1
+fi
+if [ "$cpus" -lt 4 ]; then
+  echo "note: with $cpus CPU, kind, k6 and anything else on this machine share the CPU" >&2
+  echo "with the service, so measured latency is noisier (HPA timing is not affected)." >&2
+fi
 if [ "${LAB_YES:-}" != 1 ]; then
   read -r -p "Continue? [y/N] " answer
   [ "$answer" = y ] || [ "$answer" = Y ] || exit 1

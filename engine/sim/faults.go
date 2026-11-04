@@ -48,6 +48,9 @@ func (hs *hostState) managed() bool {
 
 func (s *simState) resolveFaults() {
 	g := s.g
+	if s.w.Timeline == nil {
+		return
+	}
 	for i, f := range s.w.Timeline.Failures {
 		ref := fmt.Sprintf("workload.timeline.failures[%d]", i)
 		ft := &fault{f: f, ref: f.Target, start: f.AtS, end: math.Inf(1)}

@@ -144,3 +144,21 @@ func TestTimelineDeterministic(t *testing.T) {
 		t.Error("same design and seed must give identical timelines")
 	}
 }
+
+// A design without a workload.timeline block (as the editor's templates have)
+// simulates with the defaults.
+func TestSimulateWithoutTimeline(t *testing.T) {
+	a, err := model.Parse([]byte(singleQueue(50, 10, 1, "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Workload.Timeline = nil
+	cat, _ := catalog.Load()
+	out, err := Simulate(a, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Ticks) != (*model.Timeline)(nil).Duration() {
+		t.Errorf("ticks = %d, want the default duration", len(out.Ticks))
+	}
+}

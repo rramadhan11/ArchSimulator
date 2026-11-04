@@ -37,6 +37,7 @@ type Report struct {
 	Resources   []ResourceReport `json:"resources"`
 	Hops        []HopReport      `json:"hops"`
 	Async       []AsyncReport    `json:"async,omitempty"`
+	Edges       []EdgeReport     `json:"edges,omitempty"`
 	Replicas    []ReplicaReport  `json:"replicas,omitempty"`
 	NodePools   []PoolReport     `json:"nodePools,omitempty"`
 	Issues      []Issue          `json:"issues,omitempty"`
@@ -81,6 +82,13 @@ type HopReport struct {
 	WaitMs           float64 `json:"waitMs"`
 	ServiceMs        float64 `json:"serviceMs"`
 	DelayMs          float64 `json:"delayMs"`
+}
+
+// EdgeReport is the call rate an edge carries at the evaluated TPS: first
+// attempts offered to the callee (retries act only in the time simulation).
+type EdgeReport struct {
+	Edge      string  `json:"edge"`
+	CallsPerS float64 `json:"callsPerS"`
 }
 
 // AsyncReport is the processing latency downstream of an async edge

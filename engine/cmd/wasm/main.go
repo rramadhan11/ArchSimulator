@@ -13,6 +13,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"syscall/js"
 
 	"archsim/engine/catalog"
@@ -37,9 +38,16 @@ func reply(v any, err error) any {
 	return string(data)
 }
 
-// withDesign parses the first argument as a design and passes it to fn.
+// withDesign parses the first argument as a design and passes it to fn. An
+// engine panic is reported as an error: unrecovered, it would exit the Go
+// runtime and leave the page without an engine until it is reloaded.
 func withDesign(fn func(*model.Architecture, *catalog.Catalog) (any, error)) js.Func {
-	return js.FuncOf(func(_ js.Value, args []js.Value) any {
+	return js.FuncOf(func(_ js.Value, args []js.Value) (out any) {
+		defer func() {
+			if p := recover(); p != nil {
+				out = reply(nil, fmt.Errorf("engine bug (please report it with this design): %v", p))
+			}
+		}()
 		cat, err := catalog.Load()
 		if err != nil {
 			return reply(nil, err)

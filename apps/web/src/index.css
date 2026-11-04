@@ -119,6 +119,13 @@ body {
   font-family: var(--font-mono);
 }
 
+/* Moving traffic dots on edges (SMIL ignores CSS animation settings). */
+@media (prefers-reduced-motion: reduce) {
+  .traffic {
+    display: none;
+  }
+}
+
 .react-flow__node.selectable:focus-visible {
   outline: none;
 }

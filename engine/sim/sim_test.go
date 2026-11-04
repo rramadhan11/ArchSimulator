@@ -185,7 +185,15 @@ func TestCacheMissRouting(t *testing.T) {
 	  ],
 	  "workload": {"entry": "c", "targetTps": 100, "samples": 2000}
 	}`
-	for _, h := range mustRun(t, doc).Target.Hops {
+	res := mustRun(t, doc)
+	rates := map[string]float64{}
+	for _, e := range res.Target.Edges {
+		rates[e.Edge] = e.CallsPerS
+	}
+	within(t, "c->svc calls/s", rates["c->svc"], 100, 1e-9)
+	within(t, "svc->redis calls/s", rates["svc->redis"], 100, 1e-9)
+	within(t, "svc->pg calls/s", rates["svc->pg"], 10, 1e-9)
+	for _, h := range res.Target.Hops {
 		if h.Node == "pg" {
 			within(t, "pg visits per request", h.VisitsPerRequest, 0.1, 1e-9)
 			return

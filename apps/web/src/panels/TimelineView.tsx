@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { LoadPattern, Timeline } from '../engine/types'
 import { latest, useDesign } from '../store/design'
 import { Chart, themeColors, type ChartOption } from '../ui/Chart'
-import { Button, cx, fmt, fmtMs } from '../ui/kit'
+import { cx, fmt, fmtMs } from '../ui/kit'
 import { EngineErrorView } from './QuickCheck'
 
 const MAX_STATION_SERIES = 6
@@ -35,12 +35,9 @@ export function TimelineView() {
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="primary" onClick={() => void useDesign.getState().runTimeline()} disabled={status.state === 'running'}>
-          {status.state === 'running' ? 'Simulating…' : tl ? 'Re-run simulation' : 'Run time simulation'}
-        </Button>
         <span className="text-[12px] text-muted">
           {describeLoad(w.targetTps, w.timeline?.load)} for {w.timeline?.durationS ?? 600}s, 1 s ticks
-          {failures ? `, ${failures} injected failure${failures > 1 ? 's' : ''}` : ''}. Edit under Workload (click the empty canvas).
+          {failures ? `, ${failures} injected failure${failures > 1 ? 's' : ''}` : ''}. Edit under Workload (click the empty canvas); run with ▶ Run simulation.
         </span>
         {status.state === 'done' && <span className="num ml-auto text-[10.5px] text-muted">computed in {fmt(status.ms)} ms</span>}
       </div>

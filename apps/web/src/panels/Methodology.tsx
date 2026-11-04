@@ -81,6 +81,10 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
         <Part title="Not modeled (yet)">
           <li>Memory pressure: OOM kills, eviction, garbage-collection pauses beyond the latency variability parameter.</li>
           <li>Threads or connections a caller holds while waiting on a slow or hung dependency (so the caller does not saturate from waiting alone).</li>
+          <li>
+            Health checks failing under overload. In the calibration lab, an HTTP readiness probe on a saturated pod timed out, the pod left the Service (almost every request failed) and the HPA, which gets no
+            metrics from unready pods, scaled out minutes late. ArchSim assumes probes keep passing.
+          </li>
           <li>Retries and circuit breakers in the quick check; they act in the time simulation only.</li>
           <li>Cost, cold caches warming up, noisy neighbours, and network failures between zones.</li>
         </Part>
@@ -88,8 +92,9 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
         <Part title="How it is validated">
           <li>Golden tests compare the engine with closed-form results (M/M/1, M/M/c, M/D/1, Little&apos;s law), check both modes agree in steady state, and check the autoscaler timelines event by event.</li>
           <li>
-            A calibration lab (a reference service with an HPA under a k6 spike in Kubernetes, in the repository&apos;s <Mono>lab/</Mono>) compares the time simulation with a real run. It has not been run yet, so the
-            HPA timings are not yet validated against a real cluster.
+            A calibration lab (a reference service with an HPA under a k6 spike in Kubernetes, in the repository&apos;s <Mono>lab/</Mono>) compares the time simulation with a real run. In the first run (November
+            2026) the HPA matched qualitatively: the same 1 → 2 → 3 pods, with real decisions 27–53 s later (metrics lag). Overload was much worse in reality: requests timed out for about a minute after capacity
+            arrived, and steady-state p99 under a 0.25 CPU limit was 3–5× higher. Read overload and tail-latency results as optimistic.
           </li>
         </Part>
       </div>

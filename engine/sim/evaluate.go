@@ -70,6 +70,9 @@ func (g *graph) evaluate(tps float64, samples int, seed uint64) *Report {
 		r.Hops, r.Async = mc.hops, mc.async
 	}
 	r.Resources = g.resources(nodeRate, edgeRate, mc)
+	for _, e := range g.edges {
+		r.Edges = append(r.Edges, EdgeReport{Edge: e.id, CallsPerS: edgeRate[e.idx]})
+	}
 	r.Assumptions = g.params.list()
 	g.judge(r)
 	r.Confidence = g.confidence(r)

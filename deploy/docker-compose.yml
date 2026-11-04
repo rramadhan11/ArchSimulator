@@ -1,0 +1,36 @@
+# ArchSim on a VPS behind an existing Caddy container: see README.md.
+#
+#   cd deploy && docker compose up -d --build
+name: archsim
+
+services:
+  archsim:
+    build:
+      context: ..
+    image: archsim:local
+    restart: unless-stopped
+    # ARCHSIM_USERNAME, ARCHSIM_PASSWORD_HASH, ARCHSIM_SESSION_SECRET
+    env_file: .env
+    environment:
+      ARCHSIM_COOKIE_SECURE: "true"
+      # Caddy is the only proxy in front, so the last X-Forwarded-For entry
+      # is the real client (used by login rate limiting).
+      ARCHSIM_TRUST_PROXY: "true"
+    volumes:
+      # Saved designs: back this directory up (deploy/backup.sh).
+      - ./data:/data
+    # Not published on any host port: Caddy reaches it as archsim:8080 over
+    # its own Docker network.
+    networks:
+      caddy:
+        aliases:
+          - archsim
+    # The server is light (the simulation runs in the browser); the caps keep
+    # it from crowding out the other apps on a small VPS.
+    mem_limit: 256m
+    cpus: 1.0
+
+networks:
+  caddy:
+    external: true
+    name: ${CADDY_NETWORK:?set CADDY_NETWORK in deploy/.env}

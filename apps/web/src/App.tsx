@@ -205,6 +205,12 @@ type Tab = 'check' | 'timeline'
 function Workspace() {
   const [tab, setTab] = useState<Tab>('check')
   const [open, setOpen] = useState(true)
+  const simulating = useDesign((s) => s.timeline.state === 'running')
+  const simulate = () => {
+    setTab('timeline')
+    setOpen(true)
+    void useDesign.getState().runTimeline()
+  }
   return (
     <div className={cx('grid min-h-0 min-w-0', open ? 'grid-rows-[1fr_minmax(260px,45%)]' : 'grid-rows-[1fr_36px]')}>
       <div className="min-h-0">
@@ -218,7 +224,10 @@ function Workspace() {
           <TabButton active={tab === 'timeline'} onClick={() => (setTab('timeline'), setOpen(true))}>
             Time simulation
           </TabButton>
-          <button type="button" className="ml-auto px-2 text-[11px] text-muted hover:text-fg" onClick={() => setOpen(!open)}>
+          <Button variant="primary" className="ml-auto" onClick={simulate} disabled={simulating} title="Run the time simulation of the workload's load pattern (quick check runs by itself on every edit)">
+            {simulating ? 'Simulating…' : '▶ Run simulation'}
+          </Button>
+          <button type="button" className="px-2 text-[11px] text-muted hover:text-fg" onClick={() => setOpen(!open)}>
             {open ? 'Hide ▾' : 'Show ▴'}
           </button>
         </div>

@@ -14,6 +14,7 @@ import { useCallback, useMemo, type DragEvent } from 'react'
 import { dropTarget, useDesign } from '../store/design'
 import { archetypeOf, isCallable, type FlowEdge, type FlowNode } from '../store/model'
 import { archetypeMeta } from './archetypes'
+import { edgeTypes } from './edges'
 import { nodeTypes } from './nodes'
 
 export const DRAG_MIME = 'application/x-archsim-kind'
@@ -48,9 +49,9 @@ export function Canvas() {
       edges.map(
         (e): FlowEdge => ({
           ...e,
+          type: 'traffic',
           label: edgeLabel(e),
           selected: selection?.type === 'edge' && selection.id === e.id,
-          animated: !!e.data?.async,
           markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
           style: e.data?.async ? { strokeDasharray: '5 4' } : undefined,
         }),
@@ -111,6 +112,7 @@ export function Canvas() {
       nodes={viewNodes}
       edges={viewEdges}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
       onNodesChange={(changes) => onNodesChange(changes.filter((c) => c.type !== 'select'))}
       onEdgesChange={(changes) => onEdgesChange(changes.filter((c) => c.type !== 'select'))}
       onConnect={(c: Connection) => connect(c.source, c.target)}

@@ -37,13 +37,13 @@ function insights(r: Report | undefined): Map<string, NodeInsight> {
 }
 
 /** Per-node results of the latest quick check (re-computed when it changes). */
-function useInsight(id: string): NodeInsight | undefined {
+export function useInsight(id: string): NodeInsight | undefined {
   const check = useDesign((s) => s.check)
   const map = useMemo(() => insights(latest(check)?.target), [check])
   return map.get(id)
 }
 
-function useLimits() {
+export function useLimits() {
   const t = useDesign((s) => s.workload.thresholds)
   return { warn: t?.warn ?? 0.7, overload: t?.overload ?? 0.85 }
 }

@@ -33,6 +33,9 @@ type second struct {
 
 // sim mirrors the parts of archsim's Timeline JSON used here.
 type sim struct {
+	// encoding/json matches keys case-insensitively, so without this field
+	// the timeline's "tickS" (a number) would be decoded into Ticks.
+	TickS float64 `json:"tickS"`
 	Ticks []struct {
 		T          float64 `json:"t"`
 		OfferedTPS float64 `json:"offeredTps"`

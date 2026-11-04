@@ -5,7 +5,7 @@
     { "id": "k6", "kind": "client.web" },
     { "id": "work-deploy", "kind": "k8s.deployment",
       "config": { "requests": { "cpu": "250m", "memory": "32Mi" }, "limits": { "cpu": "250m" },
-                  "hpa": { "min": 1, "max": 6, "targetCPU": 70 }, "podStartupS": 5 } },
+                  "hpa": { "min": 1, "max": 4, "targetCPU": 70 }, "podStartupS": 5 } },
     { "id": "work", "kind": "service.generic", "parent": "work-deploy",
       "config": { "cpuMsPerReq": 4, "ioWaitMs": 0, "serviceCs2": 0 } }
   ],

@@ -36,9 +36,10 @@ Product & technical plan: [PLAN.md](PLAN.md) (section 0 lists the v1.1 decisions
   anyone who finds the URL.
 
 Not modeled yet: memory pressure (OOM kills, eviction), callers' threads held by a hung
-dependency, and retries in the quick check (the time simulation models them). The
-calibration lab against real load tests (PLAN §9, [lab/](lab/README.md)) is ready but has
-not been run yet.
+dependency, retries in the quick check (the time simulation models them), and health
+checks failing under overload. The calibration lab ([lab/](lab/README.md), run on
+2026-11-02) matched the HPA's scale-out qualitatively but showed overload and tail latency
+much worse than simulated, so read those results as optimistic.
 
 ## How it works
 
@@ -62,6 +63,7 @@ the browser, and the Go server only serves the app and handles login.
 | `engine/examples/` | Example designs: test fixtures and the web app's templates |
 | `apps/web/` | React + React Flow editor, ECharts charts, zustand store |
 | `apps/api/` | Go server: single-user login, design storage with versions (`/api/designs`), CSP, gzip, in front of the built web app |
+| `deploy/` | Docker Compose deployment behind an existing Caddy, deploy/password/backup scripts ([deploy/README.md](deploy/README.md)) |
 | `lab/` | Calibration lab: a reference service, HPA and k6 spike in kind, compared with ArchSim's simulation ([lab/README.md](lab/README.md)) |
 
 ## Getting started
@@ -103,6 +105,9 @@ make build && make run-api
 - Clients that accept gzip get precompressed `.gz` files.
 
 See `.env.example` for all settings.
+
+With Docker: the root `Dockerfile` builds everything (engine WASM, web app, server) into a
+distroless image; [deploy/README.md](deploy/README.md) runs it on a VPS behind Caddy.
 
 ## Designs
 

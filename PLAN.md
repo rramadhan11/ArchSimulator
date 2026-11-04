@@ -55,7 +55,15 @@ Bagian ini **mengalahkan** isi bagian lain jika bertentangan.
 - **Editor:** tombol Save (Ctrl/Cmd+S) dengan status perubahan yang belum tersimpan; dialog Designs berisi desain tersimpan, riwayat versi (buka atau bandingkan versi mana pun sebagai baseline), dan galeri template. Draft lokal tetap ter-autosave dan tetap terhubung ke desain server-nya setelah reload.
 - **Laporan:** halaman HTML mandiri tanpa script, siap dicetak atau disimpan sebagai PDF lewat browser. Isinya desain, quick check, time simulation (grafik SVG), perbandingan dengan baseline, dan semua asumsi beserta sumbernya. Semua nilai dari desain di-escape.
 - **Halaman metodologi** ("How it works") di dalam app: formula, langkah simulasi, sumber parameter, skor confidence, batasan, dan status validasi.
-- **Berikutnya:** deploy ke VPS (domain, HTTPS, service, backup `data/`), lalu menjalankan lab kalibrasi di sana.
+- **Deploy (2 November 2026):** https://archsim.gemps.my.id, satu container Docker di VPS 2 vCPU / 8 GB yang dipakai bersama app lain, di belakang Caddy yang sudah ada (lihat `deploy/README.md`). Canvas menampilkan traffic yang mengalir di setiap edge (laju call per edge dari quick check) dan tombol Run simulation yang selalu terlihat.
+- **Lab kalibrasi dijalankan di VPS** (hasil di `lab/README.md`). HPA cocok secara kualitatif (1 → 2 → 3 pod, terlambat 27–53 s karena jeda metrik), jadi syarat exit Fase 2 terpenuhi. Overload dan p99 ternyata jauh lebih buruk dari simulasi (error 20% vs 0,13%; p99 3–5× lebih tinggi di bawah CPU limit 0,25).
+
+**Berikutnya (prioritas)**
+1. Akurasi overload: pembagian CPU antar request yang sedang diproses (processor sharing) dan request yang ditinggal client tetap dikerjakan server, lalu efek CPU throttling pada p99 dan health check yang gagal saat overload. Dicek terhadap data lab yang sudah ada.
+2. Kalibrasi di 2 vCPU: ukur CPU per request; lab versi kecil yang puncaknya 3 pod. Lab skala penuh menunggu mesin ≥ 4 CPU.
+3. Backup otomatis `data/` (cron + salinan di luar VPS).
+4. **Playback simulasi waktu:** putar ulang hasil seperti video (play/pause/stop, slider waktu, durasi putar default 10 s). Animasi edge dan warna node mengikuti kondisi per detik, garis edge diam saat tidak diputar. Butuh laju per tick untuk semua edge dari engine; playback berhenti kalau desain diedit.
+5. Kecil: pecah bundle JS (965 KB), ukur kecepatan WASM di browser sungguhan.
 
 ---
 

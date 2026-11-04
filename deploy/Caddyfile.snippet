@@ -1,0 +1,10 @@
+# Site block for the Caddy that already terminates TLS on the VPS. Append it
+# to that Caddy's Caddyfile (see README.md), then reload Caddy.
+archsim.gemps.my.id {
+	# The app precompresses its static files; this covers the JSON API.
+	encode zstd gzip
+	# The app sets its own CSP and other security headers.
+	header Strict-Transport-Security "max-age=31536000"
+	header -Server
+	reverse_proxy archsim:8080
+}
