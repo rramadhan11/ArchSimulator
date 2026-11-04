@@ -175,17 +175,17 @@ func TestClusterAutoscalerScalesDown(t *testing.T) {
 	doc = strings.Replace(doc, `"max": 1, "clusterAutoscaler": false`, `"max": 10, "clusterAutoscaler": true`, 1)
 	out := mustSimulate(t, doc, model.Timeline{DurationS: 1000, SamplesPerTick: 100,
 		Load: &model.LoadPattern{Kind: model.LoadStep, PeakTPS: 40, StartS: 1}})
-	// HPA keeps 5 replicas for the 300 s stabilization window, then steps
-	// down; each surplus node goes 600 s after it became unneeded.
+	// The HPA's CPU metric is a 15 s average that is 15 s old, so the sync at
+	// t=15 still sees the old load and recommends 5; from t=30 it
+	// recommends 1. The 300 s stabilization window holds 5 until t=330.
+	// The surplus nodes go 600 s after they became unneeded.
 	for _, want := range []struct {
 		t   float64
 		ref string
 		msg string
 	}{
-		{315, "deploy", "HPA scales 5 → 2"},
-		{330, "deploy", "HPA scales 2 → 1"},
-		{916, "pool", "cluster autoscaler removes 3 unneeded node(s) (2 left)"},
-		{931, "pool", "cluster autoscaler removes 1 unneeded node(s) (1 left)"},
+		{330, "deploy", "HPA scales 5 → 1"},
+		{931, "pool", "cluster autoscaler removes 4 unneeded node(s) (1 left)"},
 	} {
 		if !hasEvent(out, want.t, want.ref, want.msg) {
 			t.Errorf("missing %q at t=%v in %v", want.msg, want.t, out.Events)

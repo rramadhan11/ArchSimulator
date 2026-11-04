@@ -71,33 +71,57 @@ and total errors. ArchSim's prediction for this design:
 | errors over the run | 20.3% | 0.13% |
 
 - **HPA: matches qualitatively** (the PLAN §9.3 bar): the same 1 → 2 → 3
-  sequence and the same peak pod count. The real decisions come 27–53 s later,
-  in the range expected from metrics-server's scrape lag plus the time new pods
-  take to report CPU.
-- **Overload: ArchSim is optimistic.** In the real run nearly every request timed
-  out from t=80 s to t=150 s, long after the third pod was ready, while the
-  simulation recovered by t=96 s. Two likely causes, neither modeled:
-  - Go shares the CPU between in-flight requests, so under overload all of them
-    slow down together and most exceed the 2 s client timeout; ArchSim models a
-    first-in first-out queue.
-  - Requests the client gave up on are still served, which wastes capacity
-    while the backlog drains.
-- **Steady state at 120 req/s with 3 pods: real p99 was 120–250 ms against
-  ArchSim's 47 ms.** The likely cause is CFS throttling (a 0.25 CPU limit allows
-  25 ms of CPU per 100 ms period).
-  - The HPA also asked for a 4th pod. Since that means average CPU above the 70%
-    target, the real cost was likely more than 4.4 ms of CPU per request
-    (handling overhead on top of the 4 ms of work). This is inferred, not
-    measured.
-  - The 4th pod stayed Pending: Kubernetes' own pods requested 1.05 CPU, so the
-    2-CPU node had room for 3 service pods.
+  sequence and the same peak pod count. The real decisions came later: 1 → 2
+  at t=102 s (simulated 75 s) and 2 → 3 at t=148 s (simulated 90 s).
+- **Overload: ArchSim was optimistic.** In the real run nearly every request
+  timed out from t=80 s to t=150 s; the simulation recovered by t=96 s. The cause
+  turned out to be the HPA, not the queue model:
+  - The real HPA reads CPU from metrics-server: a 15 s average, already
+    ~15 s old.
+  - A pod that just became ready has no metric covering its ready time yet,
+    so on a scale-up it counts as using 0% (Kubernetes' replica calculator).
+  - Two pods served 125 req/s against 120 req/s, so the backlog did not drain
+    and requests kept timing out until the third pod came.
+
+**After modeling both** (`hpa.metricsWindowS` 15 s from the metrics-server
+manifest, `hpa.metricsDelayS` 15 s fitted here), against the same run:
+
+| | real | ArchSim before | ArchSim after |
+|---|---|---|---|
+| 1 → 2 decision | t=102 s | t=75 s | t=90 s |
+| 2 → 3 decision | t=148 s | t=90 s | t=135 s |
+| peak ready pods | 3 at t=149 s | 3 at t=96 s | 3 at t=141 s |
+| errors over the run | 20.3% | 0.13% | 19.6% |
+
+The remaining offset is within one 15 s sync period (the real HPA's sync phase
+is unknown). Processor sharing (Go serving all in-flight requests at once) is
+not needed to explain the errors: the first-in first-out backlog with
+abandoned requests still served gets the same result. `TestLabDesignHPATiming`
+pins these timings.
+- **Latency under the 0.25 CPU limit is off in both directions** (CFS quota:
+  the pod runs at full core speed until it has used 25 ms of each 100 ms period,
+  then waits; ArchSim models a core 4× slower):
+
+  | per pod | real p50 / p99 | ArchSim p50 / p99 |
+  |---|---|---|
+  | 16% (30 req/s, 3 pods) | 4.4 / 8.8 ms | 16 / 17 ms |
+  | 48% (30 req/s, 1 pod) | 4.4 / 8.3 ms | 16 / 75 ms |
+  | 64% (120 req/s, 3 pods) | 31 / 134 ms | 16 / 43 ms |
+
+- The HPA asked for a 4th pod at t=193 s, most likely because the pods were
+  still at full CPU draining the backlog (p50 was still ~300 ms then). An
+  earlier version of this README guessed extra CPU per request instead; the
+  timing points to the backlog. The 4th pod stayed Pending: Kubernetes' own pods
+  requested 1.05 CPU, so the 2-CPU node had room for 3 service pods.
 - k6 dropped ~190 iterations (out of virtual users) at the peak, so the real
   offered load was slightly below the simulated one.
 
 Next calibration steps:
-1. Measure CPU per request (and set `cpuMsPerReq` from it).
-2. Run on a machine with ≥ 4 CPU so the 4th pod fits.
-3. Model processor sharing and abandoned requests in overload.
+1. Model CFS quota throttling for pods with a CPU limit (the latency table
+   above is the target).
+2. Measure CPU per request (and set `cpuMsPerReq` from it).
+3. A smaller spike that peaks at 3 pods fits this 2 vCPU VPS; the full run needs
+   a machine with ≥ 4 CPU.
 
 ## What to look for
 

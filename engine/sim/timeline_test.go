@@ -3,6 +3,7 @@ package sim
 import (
 	"fmt"
 	"math"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -90,14 +91,19 @@ func TestTimelineSpikeScalesOut(t *testing.T) {
 	if first.Replicas[0] != (ReplicaTick{Desired: 1, Ready: 1}) || first.Pools[0].Ready != 1 {
 		t.Fatalf("initial state = %+v / %+v, want 1 pod on 1 node", first.Replicas[0], first.Pools[0])
 	}
-	// The first sync averages ticks 0-15: 10 at 0.4 cores, 6 saturated at
-	// 1 core (the pod cannot report demand it does not serve) = 0.625 cores,
-	// 125% of the 0.5-core target, so HPA asks for 2 pods, not 5.
+	// The HPA reads a 15 s CPU average that is 15 s old. At t=15 that is
+	// the steady state before the spike (80% of target: no change). At t=30
+	// it averages ticks 1-15: 9 at 0.4 cores, 6 saturated at 1 core (the pod
+	// cannot report demand it does not serve) = 0.64 cores, 128% of the
+	// 0.5-core target, so HPA asks for 2 pods, not 5.
 	want := map[string]float64{
-		"HPA scales 1 → 2 replicas (CPU at 125% of target)":   15,
-		"1 pod(s) Pending: no room on the node pool":          16,
-		"cluster autoscaler requests 1 node(s), ready in 90s": 16,
-		"1 node(s) ready (2 total)":                           106,
+		"HPA scales 1 → 2 replicas (CPU at 128% of target)":   30,
+		"1 pod(s) Pending: no room on the node pool":          31,
+		"cluster autoscaler requests 1 node(s), ready in 90s": 31,
+		"1 node(s) ready (2 total)":                           121,
+		// The new pod is ready at 141 and has a metric of its own from 171
+		// (until then it counts as using 0%): both pods saturated → 4.
+		"HPA scales 2 → 4 replicas (CPU at 200% of target)": 180,
 	}
 	for _, e := range out.Events {
 		if at, ok := want[e.Message]; ok && at == e.T {
@@ -114,11 +120,11 @@ func TestTimelineSpikeScalesOut(t *testing.T) {
 			t.Errorf("t=%d: desired = %d, want 2", i, d)
 		}
 	}
-	if r := out.Ticks[125].Replicas[0].Ready; r != 1 {
-		t.Errorf("t=125: ready = %d, want 1 (pod still starting)", r)
+	if r := out.Ticks[140].Replicas[0].Ready; r != 1 {
+		t.Errorf("t=140: ready = %d, want 1 (pod still starting)", r)
 	}
-	if r := out.Ticks[126].Replicas[0].Ready; r != 2 {
-		t.Errorf("t=126: ready = %d, want 2 (20 s pod startup after the node)", r)
+	if r := out.Ticks[141].Replicas[0].Ready; r != 2 {
+		t.Errorf("t=141: ready = %d, want 2 (20 s pod startup after the node)", r)
 	}
 
 	// The 30 s queue timeout caps the backlog at 30 s of capacity: 3000
@@ -132,8 +138,10 @@ func TestTimelineSpikeScalesOut(t *testing.T) {
 	if fb := out.Summary.FirstBreachS; fb == nil || *fb != 30 {
 		t.Errorf("first SLO breach = %v, want 30 (first drops)", fb)
 	}
-	if last := out.Ticks[len(out.Ticks)-1]; last.Stations[0].Backlog != 0 || last.ErrorRate != 0 || last.Replicas[0].Ready < 5 {
-		t.Errorf("final tick: %+v, want drained with >= 5 ready pods", last)
+	// Draining the backlog keeps the pods saturated, so the HPA overshoots
+	// (asks for 8); the 4 that are ready by then already drain it.
+	if last := out.Ticks[len(out.Ticks)-1]; last.Stations[0].Backlog != 0 || last.ErrorRate != 0 || last.Replicas[0].Ready < 4 {
+		t.Errorf("final tick: %+v, want drained with >= 4 ready pods", last)
 	}
 }
 
@@ -160,5 +168,35 @@ func TestSimulateWithoutTimeline(t *testing.T) {
 	}
 	if len(out.Ticks) != (*model.Timeline)(nil).Duration() {
 		t.Errorf("ticks = %d, want the default duration", len(out.Ticks))
+	}
+}
+
+// The calibration lab's design (lab/README.md, run 2 on 2026-11-02). The real
+// HPA decided 1 → 2 at t=102 and 2 → 3 at t=148; the HPA's sync phase is
+// unknown, so these are pinned at the simulated sync times to catch drift.
+func TestLabDesignHPATiming(t *testing.T) {
+	data, err := os.ReadFile("../../lab/design.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := model.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, _ := catalog.Load()
+	out, err := Simulate(a, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		t   float64
+		msg string
+	}{
+		{90, "HPA scales 1 → 2"},
+		{135, "HPA scales 2 → 3"},
+	} {
+		if !hasEvent(out, want.t, "work-deploy", want.msg) {
+			t.Errorf("missing %q at t=%v in %v", want.msg, want.t, out.Events)
+		}
 	}
 }

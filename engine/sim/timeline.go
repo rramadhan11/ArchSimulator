@@ -171,6 +171,11 @@ type scaler struct {
 	downWindowS float64
 	upPercent   float64 // scale-up limit per sync; 0 with upPods 0 = unlimited
 	upPods      int
+	// HPA only (kube): the CPU metric is the average over windowS seconds,
+	// delayS old when read, and pods without such a metric are set aside.
+	kube    bool
+	windowS int
+	delayS  int
 }
 
 type recommendation struct {
@@ -189,6 +194,8 @@ type hostState struct {
 	starting []float64 // ready-at times of scheduled replicas still starting
 	usage    float64   // served cores summed since the last sync
 	usageN   int
+	perPod   []float64 // HPA: cores per ready replica at each tick (NaN: none ready)
+	fresh    []float64 // HPA: ready-at times of replicas without a metric since, oldest first
 	recs     []recommendation
 	pending  int
 	pinned   bool
@@ -257,6 +264,9 @@ func (g *graph) newSimState(w model.Workload) *simState {
 					downWindowS: g.nonNeg(h.host, "hpa.scaleDownStabilizationS"),
 					upPercent:   g.nonNeg(h.host, "hpa.scaleUpPercent"),
 					upPods:      g.count(h.host, "hpa.scaleUpPods", 0),
+					kube:        true,
+					windowS:     g.count(h.host, "hpa.metricsWindowS", 1),
+					delayS:      g.count(h.host, "hpa.metricsDelayS", 0),
 				}
 			}
 		case h.host.arch == catalog.RuntimeHost:
@@ -362,8 +372,16 @@ func (s *simState) step(i int, tps float64) {
 	s.flow(i, tps)
 
 	for _, hs := range s.hosts {
-		hs.usage += hs.h.svc.st.work / 1000 / hs.h.uslFactor
+		cores := hs.h.svc.st.work / 1000 / hs.h.uslFactor
+		hs.usage += cores
 		hs.usageN++
+		if hs.sc != nil && hs.sc.kube {
+			perPod := math.NaN()
+			if hs.ready > 0 {
+				perPod = cores / float64(hs.ready)
+			}
+			hs.perPod = append(hs.perPod, perPod)
+		}
 	}
 	tick := Tick{T: t, OfferedTPS: tps}
 	clear(s.lv.att)
@@ -391,6 +409,11 @@ func (s *simState) provision(t float64) {
 		}
 		hs.ready += n
 		hs.starting = hs.starting[n:]
+		if hs.sc != nil && hs.sc.kube {
+			for range n {
+				hs.fresh = append(hs.fresh, t)
+			}
+		}
 	}
 	for _, ps := range s.pools {
 		n := 0
@@ -646,14 +669,24 @@ func (s *simState) autoscale(i int, t float64) {
 		}
 		cores := hs.usage / float64(hs.usageN)
 		hs.usage, hs.usageN = 0, 0
-		if hs.ready == 0 {
-			continue // no metrics yet
-		}
-		ratio := cores / (float64(hs.ready) * a.basis * a.target)
-		want := int(math.Ceil(cores/(a.basis*a.target) - 1e-9))
-		rec := hs.desired
-		if math.Abs(ratio-1) > sc.tolerance {
-			rec = want
+		// want: replicas the measured load needs; rec: what the scaler asks for.
+		var ratio float64
+		var want, rec int
+		if sc.kube {
+			var ok bool
+			if ratio, want, rec, ok = s.hpaRecommend(hs, i, t); !ok {
+				continue
+			}
+		} else {
+			if hs.ready == 0 {
+				continue // no metrics yet
+			}
+			ratio = cores / (float64(hs.ready) * a.basis * a.target)
+			want = int(math.Ceil(cores/(a.basis*a.target) - 1e-9))
+			rec = hs.desired
+			if math.Abs(ratio-1) > sc.tolerance {
+				rec = want
+			}
 		}
 		rec = min(max(rec, a.min), a.max)
 
@@ -686,6 +719,61 @@ func (s *simState) autoscale(i int, t float64) {
 		}
 		hs.pinned = pinned
 	}
+}
+
+// hpaRecommend follows the Kubernetes HPA replica calculation for CPU
+// (GetResourceReplicas in pkg/controller/podautoscaler/replica_calculator.go,
+// v1.31). The metric is each pod's CPU averaged over the windowS seconds that
+// end delayS seconds ago. Pods without a usable metric are "unready": Pending
+// and starting pods, and pods that became ready after the window began. On a
+// scale-up they count as using 0% (which can cancel it); otherwise they are
+// left out. Pods with no metric at all are not distinguished: in the
+// simulation they are the starting ones, already unready.
+// https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/#algorithm-details
+// ok is false when no pod has a metric yet.
+func (s *simState) hpaRecommend(hs *hostState, i int, t float64) (ratio float64, want, rec int, ok bool) {
+	sc, a := hs.sc, hs.h.auto
+	since := t - float64(sc.delayS+sc.windowS) // a metric needs the pod ready from here on
+	keep := 0
+	for keep < len(hs.fresh) && hs.fresh[keep] <= since {
+		keep++
+	}
+	hs.fresh = hs.fresh[keep:]
+	if len(hs.fresh) > hs.ready { // replicas were removed: newest first
+		hs.fresh = hs.fresh[:hs.ready]
+	}
+	measured := hs.ready - len(hs.fresh)
+	unready := len(hs.fresh) + len(hs.starting) + hs.pending
+
+	var sum float64
+	n := 0
+	for j := i - sc.delayS - sc.windowS + 1; j <= i-sc.delayS; j++ {
+		// Before the first tick the system ran in the steady state of tick 0.
+		if v := hs.perPod[max(j, 0)]; !math.IsNaN(v) {
+			sum += v
+			n++
+		}
+	}
+	if measured <= 0 || n == 0 {
+		return 0, 0, 0, false // "did not receive metrics for targeted pods"
+	}
+	perPod := a.basis * a.target
+	used := float64(measured) * sum / float64(n) // cores, measured pods
+	ratio = used / (float64(measured) * perPod)
+	want = int(math.Ceil(used/perPod - 1e-9))
+	rec = hs.desired
+	if unready == 0 || ratio <= 1 {
+		if math.Abs(ratio-1) > sc.tolerance {
+			rec = want
+		}
+		return ratio, want, rec, true
+	}
+	pods := measured + unready
+	adjusted := used / (float64(pods) * perPod)
+	if math.Abs(adjusted-1) <= sc.tolerance || adjusted < 1 {
+		return ratio, want, rec, true
+	}
+	return ratio, want, max(rec, int(math.Ceil(adjusted*float64(pods)-1e-9))), true
 }
 
 func (s *simState) record(tick *Tick) {

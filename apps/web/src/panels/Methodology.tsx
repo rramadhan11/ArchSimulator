@@ -53,8 +53,9 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
             across the second.
           </li>
           <li>
-            <b>Kubernetes HPA</b> runs every sync period (15 s) on the CPU pods actually used (a saturated pod cannot report more than its limit; starting pods have no metrics), with a 10% tolerance, scale-up of 100% or
-            4 pods per period, and a 300 s scale-down stabilization window. New pods become ready after the startup delay; pods that do not fit stay Pending until the <b>cluster autoscaler</b> adds nodes after the
+            <b>Kubernetes HPA</b> runs every sync period (15 s) on the CPU pods actually used (a saturated pod cannot report more than its limit), read the way metrics-server delivers it: a 15 s average that is
+            already about 15 s old. Pods without a metric yet (Pending, starting, or ready for less than a metric window) count as using 0% when the others ask to scale up, which holds scale-up back as in
+            Kubernetes&apos; replica calculation. Then a 10% tolerance, scale-up of 100% or 4 pods per period, and a 300 s scale-down stabilization window. New pods become ready after the startup delay; pods that do not fit stay Pending until the <b>cluster autoscaler</b> adds nodes after the
             provisioning delay, and unneeded nodes are removed after 10 minutes. VM groups follow target tracking with boot time and scale-in cooldown.
           </li>
           <li>
@@ -86,6 +87,10 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
             metrics from unready pods, scaled out minutes late. ArchSim assumes probes keep passing.
           </li>
           <li>Retries and circuit breakers in the quick check; they act in the time simulation only.</li>
+          <li>
+            How Linux enforces a CPU limit (CFS quota): a pod limited to 0.25 CPU runs at full core speed until it has used 25 ms of each 100 ms period, then waits. ArchSim models it as a 4× slower core, so
+            at low load its latency is too high (lab: 16 ms against 4.4 ms) and near the target too low (p99 43 ms against 134 ms).
+          </li>
           <li>Cost, cold caches warming up, noisy neighbours, and network failures between zones.</li>
         </Part>
 
@@ -93,8 +98,8 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
           <li>Golden tests compare the engine with closed-form results (M/M/1, M/M/c, M/D/1, Little&apos;s law), check both modes agree in steady state, and check the autoscaler timelines event by event.</li>
           <li>
             A calibration lab (a reference service with an HPA under a k6 spike in Kubernetes, in the repository&apos;s <Mono>lab/</Mono>) compares the time simulation with a real run. In the first run (November
-            2026) the HPA matched qualitatively: the same 1 → 2 → 3 pods, with real decisions 27–53 s later (metrics lag). Overload was much worse in reality: requests timed out for about a minute after capacity
-            arrived, and steady-state p99 under a 0.25 CPU limit was 3–5× higher. Read overload and tail-latency results as optimistic.
+            2026), before the HPA modeled metrics delay and pods without metrics, real scale-ups came 27–58 s after simulated ones and real errors were 20% against 0.13%. With both modeled, the decisions
+            land within one sync period of the real ones and errors match (19.6% against 20.3%). Latency under a CPU limit is still off (see above): read p50/p99 for pods with fractional CPU limits as rough.
           </li>
         </Part>
       </div>

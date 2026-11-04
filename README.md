@@ -37,9 +37,10 @@ Product & technical plan: [PLAN.md](PLAN.md) (section 0 lists the v1.1 decisions
 
 Not modeled yet: memory pressure (OOM kills, eviction), callers' threads held by a hung
 dependency, retries in the quick check (the time simulation models them), and health
-checks failing under overload. The calibration lab ([lab/](lab/README.md), run on
-2026-11-02) matched the HPA's scale-out qualitatively but showed overload and tail latency
-much worse than simulated, so read those results as optimistic.
+checks failing under overload, and how Linux enforces CPU limits (CFS quota). The
+calibration lab ([lab/](lab/README.md), run on 2026-11-02) now matches the HPA's scale-out
+within one sync period and the errors of an overload; latency of pods with fractional CPU
+limits is still rough.
 
 ## How it works
 
