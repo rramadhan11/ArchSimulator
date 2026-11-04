@@ -24,6 +24,12 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
             Multi-core replicas lose efficiency to contention via the <b>Universal Scalability Law</b> (σ, κ). CPU limits cap capacity; HPA targets are relative to CPU requests.
           </li>
           <li>
+            A CPU limit below the pod&apos;s threads (e.g. 250m, 1500m) is enforced by Linux <b>CFS quota</b>: the pod runs at full core speed until it has used limit × 100 ms of CPU in the current
+            100 ms period, then waits for the next. Capacity is the limit, but latency is not that of a slower core: fast at low load, with waits of up to a period near the limit. The wait distribution
+            of such a pod comes from a small event simulation of one replica (its own queue, Poisson arrivals). Other stations share one queue across replicas (Erlang C), which is optimistic when a
+            load balancer routes at random.
+          </li>
+          <li>
             Percentiles come from a <b>seeded Monte Carlo</b> pass (20,000 requests by default) that samples queue waits, service times, network round trips and fan-out (parallel calls take the slowest, sequential calls
             add up). The same design and seed always give the same numbers.
           </li>
@@ -63,6 +69,11 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
             budget caps retries at a share of first attempts. <b>Circuit breakers</b> open when the failure rate over their window passes the threshold, fail calls fast while open, and probe before closing.
           </li>
           <li>
+            <b>Readiness probes</b> (Deployments with <Mono>readinessProbe.kind: http</Mono>): the probe request waits behind the pod&apos;s backlog, so it fails once that wait exceeds its timeout. After
+            the failure threshold the pods leave the Service and new requests fail at once, while the pods finish their backlog; the probe then passes and traffic returns, so an overloaded Deployment
+            flaps. A not-Ready pod younger than 5 minutes gives the HPA no CPU metric. TCP probes are answered by the kernel and never fail from load.
+          </li>
+          <li>
             <b>Failure injection</b>: lost nodes/VMs/pods (controllers replace what they manage after their usual delay), a zone outage, a dependency that errors or hangs, added latency, and database failover.
           </li>
         </Part>
@@ -83,14 +94,10 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
           <li>Memory pressure: OOM kills, eviction, garbage-collection pauses beyond the latency variability parameter.</li>
           <li>Threads or connections a caller holds while waiting on a slow or hung dependency (so the caller does not saturate from waiting alone).</li>
           <li>
-            Health checks failing under overload. In the calibration lab, an HTTP readiness probe on a saturated pod timed out, the pod left the Service (almost every request failed) and the HPA, which gets no
-            metrics from unready pods, scaled out minutes late. ArchSim assumes probes keep passing.
+            Liveness probes (a failing one restarts the container and loses its work), and clients that keep connections open: kube-proxy only stops new connections to a not-Ready pod, so keep-alive
+            traffic keeps reaching it. ArchSim stops all traffic, as an L7 proxy (Ingress, Envoy, Kong) does. All replicas of a Deployment pass or fail their probe together.
           </li>
           <li>Retries and circuit breakers in the quick check; they act in the time simulation only.</li>
-          <li>
-            How Linux enforces a CPU limit (CFS quota): a pod limited to 0.25 CPU runs at full core speed until it has used 25 ms of each 100 ms period, then waits. ArchSim models it as a 4× slower core, so
-            at low load its latency is too high (lab: 16 ms against 4.4 ms) and near the target too low (p99 43 ms against 134 ms).
-          </li>
           <li>Cost, cold caches warming up, noisy neighbours, and network failures between zones.</li>
         </Part>
 
@@ -99,7 +106,8 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
           <li>
             A calibration lab (a reference service with an HPA under a k6 spike in Kubernetes, in the repository&apos;s <Mono>lab/</Mono>) compares the time simulation with a real run. In the first run (November
             2026), before the HPA modeled metrics delay and pods without metrics, real scale-ups came 27–58 s after simulated ones and real errors were 20% against 0.13%. With both modeled, the decisions
-            land within one sync period of the real ones and errors match (19.6% against 20.3%). Latency under a CPU limit is still off (see above): read p50/p99 for pods with fractional CPU limits as rough.
+            land within one sync period of the real ones and errors match (19.6% against 20.3%). With CFS quota modeled, p50 at low load matches (4.0 against 4.4 ms; a core 4× slower gave 16 ms). Throttling
+            near the limit is not validated yet: on the lab&apos;s 2-CPU machine, the pods also waited for CPU behind Kubernetes and k6 (real p50 31 ms at 64% against 4 ms simulated).
           </li>
         </Part>
       </div>

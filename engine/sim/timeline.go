@@ -140,11 +140,12 @@ type simState struct {
 	hosts    []*hostState
 	pools    []*poolState
 
-	backlog []float64 // per visit, in visits
-	offered []float64 // per visit, visits/s this tick
-	served  []float64 // per visit, visits/s this tick
-	reject  []float64 // per node, probability a visit is refused this tick
-	wasBusy []bool    // per output station, backlog at the previous tick
+	backlog []float64    // per visit, in visits
+	offered []float64    // per visit, visits/s this tick
+	served  []float64    // per visit, visits/s this tick
+	reject  []float64    // per node, probability a visit is refused this tick
+	probed  []*hostState // per node: the service's host when it has a readiness probe
+	wasBusy []bool       // per output station, backlog at the previous tick
 
 	lv          *live
 	attempts    []float64    // per visit: calls/s sent to it this tick, retries included
@@ -176,6 +177,7 @@ type scaler struct {
 	kube    bool
 	windowS int
 	delayS  int
+	initS   float64 // a pod younger than this that is not Ready has no usable metric
 }
 
 type recommendation struct {
@@ -196,10 +198,17 @@ type hostState struct {
 	usageN   int
 	perPod   []float64 // HPA: cores per ready replica at each tick (NaN: none ready)
 	fresh    []float64 // HPA: ready-at times of replicas without a metric since, oldest first
-	recs     []recommendation
-	pending  int
-	pinned   bool
-	down     int // unmanaged instances lost to a failure, not restarted
+	young    []float64 // HPA: ready-at times of replicas younger than initS, oldest first
+
+	// HTTP readiness probe: all replicas share the backlog, so they pass or
+	// fail together. Not Ready replicas get no new traffic but finish their
+	// backlog.
+	notReady         bool
+	probeFails, oked int
+	recs             []recommendation
+	pending          int
+	pinned           bool
+	down             int // unmanaged instances lost to a failure, not restarted
 }
 
 type poolState struct {
@@ -248,6 +257,7 @@ func (g *graph) newSimState(w model.Workload) *simState {
 	// running at that rate before the simulated window.
 	g.evaluate(w.TPSAt(0), s.samples, s.seed)
 
+	s.probed = make([]*hostState, len(g.nodes))
 	for _, h := range g.hosts {
 		hs := &hostState{h: h, ref: h.svc.m.ID, desired: h.desired, ready: h.scheduled}
 		if h.host != nil {
@@ -267,6 +277,7 @@ func (g *graph) newSimState(w model.Workload) *simState {
 					kube:        true,
 					windowS:     g.count(h.host, "hpa.metricsWindowS", 1),
 					delayS:      g.count(h.host, "hpa.metricsDelayS", 0),
+					initS:       g.nonNeg(h.host, "hpa.cpuInitializationS"),
 				}
 			}
 		case h.host.arch == catalog.RuntimeHost:
@@ -280,6 +291,9 @@ func (g *graph) newSimState(w model.Workload) *simState {
 		}
 		if hs.sc != nil {
 			hs.recs = []recommendation{{0, hs.desired}}
+		}
+		if h.probe != nil {
+			s.probed[h.svc.idx] = hs
 		}
 		s.hosts = append(s.hosts, hs)
 		s.out.Services = append(s.out.Services, h.svc.m.ID)
@@ -393,6 +407,7 @@ func (s *simState) step(i int, tps float64) {
 		tick.Latency = &mc.latency
 	}
 	s.settleCalls(i, t)
+	s.probeReadiness(i, t)
 	if i > 0 {
 		s.autoscale(i, t)
 	}
@@ -412,6 +427,7 @@ func (s *simState) provision(t float64) {
 		if hs.sc != nil && hs.sc.kube {
 			for range n {
 				hs.fresh = append(hs.fresh, t)
+				hs.young = append(hs.young, t)
 			}
 		}
 	}
@@ -526,13 +542,21 @@ func (s *simState) flow(i int, tps float64) {
 	}
 	for _, st := range g.stations {
 		st.lambda, st.work, st.s2 = 0, 0, 0
-		st.q, st.meanS, st.fluidMs, st.fluidLoMs, st.offeredLoad, st.down = QueueStats{}, 0, 0, 0, 0, false
+		st.q, st.meanS, st.fluidMs, st.fluidLoMs, st.offeredLoad, st.down, st.cfsW = QueueStats{}, 0, 0, 0, 0, false, nil
 	}
 
 	for _, n := range s.order {
 		visits := s.byNode[n.idx]
 		if len(visits) == 0 {
 			continue
+		}
+		// A Service without Ready pods refuses new requests; the pods still
+		// work off what they had queued.
+		if hs := s.probed[n.idx]; hs != nil && hs.notReady {
+			for _, v := range visits {
+				s.offered[v.idx] = 0
+			}
+			s.reject[n.idx] = 1
 		}
 		// A datastore node can feed two stations (primary, replicas); keep
 		// first-seen order so results stay deterministic.
@@ -589,6 +613,7 @@ func (s *simState) flow(i int, tps float64) {
 		cs2 := st.s2/(st.lambda*mean*mean) - 1
 		if q := Queue(st.lambda, st.meanS, cs2, st.servers); q.Stable() {
 			st.q = q
+			st.cfsW = s.g.cfsWaits(st, cs2)
 		} else {
 			st.q = QueueStats{Rho: 1}
 		}
@@ -721,6 +746,34 @@ func (s *simState) autoscale(i int, t float64) {
 	}
 }
 
+// probeReadiness runs the HTTP readiness probes due at tick i. A probe
+// fails when the wait behind the backlog at the end of the tick exceeds its
+// timeout; the queue's own stochastic wait (far below a timeout of seconds
+// unless the backlog builds) is not counted.
+func (s *simState) probeReadiness(i int, t float64) {
+	for _, hs := range s.hosts {
+		pr := hs.h.probe
+		if pr == nil || hs.ready == 0 || i%pr.periodS != 0 {
+			continue
+		}
+		waitMs := hs.h.svc.st.fluidMs
+		if waitMs > pr.timeoutMs {
+			hs.probeFails, hs.oked = hs.probeFails+1, 0
+		} else {
+			hs.probeFails, hs.oked = 0, hs.oked+1
+		}
+		switch {
+		case !hs.notReady && hs.probeFails >= pr.failures:
+			hs.notReady = true
+			s.event(t, hs.ref, "readiness probe failed %d× (backlog wait %s > %s timeout): pods leave the Service, new requests fail",
+				hs.probeFails, fmtMs(waitMs), fmtMs(pr.timeoutMs))
+		case hs.notReady && hs.oked >= pr.successes:
+			hs.notReady = false
+			s.event(t, hs.ref, "readiness probe passes: pods are back in the Service")
+		}
+	}
+}
+
 // hpaRecommend follows the Kubernetes HPA replica calculation for CPU
 // (GetResourceReplicas in pkg/controller/podautoscaler/replica_calculator.go,
 // v1.31). The metric is each pod's CPU averaged over the windowS seconds that
@@ -739,11 +792,23 @@ func (s *simState) hpaRecommend(hs *hostState, i int, t float64) (ratio float64,
 		keep++
 	}
 	hs.fresh = hs.fresh[keep:]
+	keep = 0
+	for keep < len(hs.young) && hs.young[keep] <= t-sc.initS {
+		keep++
+	}
+	hs.young = hs.young[keep:]
 	if len(hs.fresh) > hs.ready { // replicas were removed: newest first
 		hs.fresh = hs.fresh[:hs.ready]
 	}
-	measured := hs.ready - len(hs.fresh)
-	unready := len(hs.fresh) + len(hs.starting) + hs.pending
+	if len(hs.young) > hs.ready {
+		hs.young = hs.young[:hs.ready]
+	}
+	noMetric := len(hs.fresh)
+	if hs.notReady { // failing the readiness probe: only older pods keep a metric
+		noMetric = len(hs.young)
+	}
+	measured := hs.ready - noMetric
+	unready := noMetric + len(hs.starting) + hs.pending
 
 	var sum float64
 	n := 0

@@ -9,6 +9,17 @@ params:
   hpa.min: { default: 1, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/", note: "minReplicas defaults to 1" } }
   hpa.max: { default: 10, source: { kind: default-estimate } }
   hpa.targetCPU: { default: 80, description: "Target average CPU utilization (% of requests)", source: { kind: vendor-docs, url: "https://kubernetes.io/docs/reference/kubectl/generated/kubectl_autoscale/", note: "kubectl autoscale default --cpu-percent" } }
+  cfsPeriodMs: { default: 100, unit: ms, description: "CFS period: with a CPU limit, a pod may use limit × period of CPU per period, at full core speed, then waits for the next", source: { kind: vendor-docs, url: "https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/", note: "--cpu-cfs-quota-period defaults to 100ms" } }
+  readinessProbe.kind:
+    default: none
+    options: [none, http, tcp]
+    description: "http: the probe request queues with the traffic, so it fails when the backlog wait exceeds the timeout and the pod leaves the Service (time simulation only). tcp is answered by the kernel and does not fail under load."
+    source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/", note: "Without a readiness probe a pod is Ready once its containers run" }
+  readinessProbe.periodS: { default: 10, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "periodSeconds defaults to 10" } }
+  readinessProbe.timeoutS: { default: 1, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "timeoutSeconds defaults to 1" } }
+  readinessProbe.failureThreshold: { default: 3, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "failureThreshold defaults to 3" } }
+  readinessProbe.successThreshold: { default: 1, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "successThreshold defaults to 1" } }
+  hpa.cpuInitializationS: { default: 300, unit: s, description: "A pod this young that is not Ready has no usable CPU metric", source: { kind: vendor-docs, url: "https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/", note: "--horizontal-pod-autoscaler-cpu-initialization-period defaults to 5m0s" } }
   podStartupS: { default: 20, unit: s, description: "Scheduled to Ready: image pull (cached), container start, readiness probe", source: { kind: default-estimate } }
   hpa.syncPeriodS: { default: 15, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/", note: "--horizontal-pod-autoscaler-sync-period defaults to 15s" } }
   hpa.metricsWindowS: { default: 15, unit: s, description: "CPU is a rate between two metrics-server scrapes", source: { kind: vendor-docs, url: "https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml", note: "The release manifest runs metrics-server with --metric-resolution=15s" } }

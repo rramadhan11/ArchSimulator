@@ -57,9 +57,16 @@ and total errors. ArchSim's prediction for this design:
   over the run.
 - The HPA reported "did not receive metrics for targeted pods (pods might be
   unready)" and first scaled at t=248 s; the simulation scaled at t=75 s.
-- This is a real failure mode that ArchSim does not model (it assumes probes
-  keep passing). It is now listed under "Not modeled" in the app's methodology
-  page.
+- ArchSim now models HTTP readiness probes (`readinessProbe.kind: http`).
+  The lab design with run 1's probe flaps in the simulation (out of the
+  Service for 1–2 s every ~4 s) but recovers once the HPA adds pods: 3.3%
+  errors against the real 71%. Two real effects explain the gap, and both are
+  documented rather than fitted:
+  - The lab's pod was under 5 minutes old, so the HPA got no CPU metric while
+    the pod was not Ready. The simulation starts from a long-running steady
+    state.
+  - kube-proxy keeps sending keep-alive traffic to a not-Ready pod, so the pod
+    stayed saturated. ArchSim stops all traffic, as an L7 proxy does.
 
 **Run 2: TCP readiness probe** (answered by the kernel, as `k8s/app.yaml` now has):
 
@@ -116,9 +123,27 @@ pins these timings.
 - k6 dropped ~190 iterations (out of virtual users) at the peak, so the real
   offered load was slightly below the simulated one.
 
+**After modeling CFS quota** (`engine/sim/cfs.go`; same run):
+
+| per pod | real p50 / p99 | ArchSim p50 / p99 |
+|---|---|---|
+| 16% (3 pods) | 4.4 / 8.7 ms | 4.0 / 7.0 ms |
+| 48% (1 pod) | 4.4 / 8.3 ms | 4.0 / 19.8 ms |
+| 64% (3 pods) | 31 / 135 ms | 4.0 / 61 ms |
+
+- **Low load matches.** The remaining 0.4 ms is HTTP and network overhead.
+- **The 48% p99 differs because of the arrivals.** k6 sends requests evenly
+  spaced, while ArchSim assumes random (Poisson) arrivals, as production
+  traffic has. A one-pod simulation with k6's spacing gives p99 4 ms, with
+  Poisson 18 ms.
+- **The 64% point does not validate the throttling tail.** Its spread (p25
+  10 ms, p50 31 ms, p90 80 ms) is not the shape quota throttling gives (most
+  requests at 4 ms plus a tail of up to 75 ms). The likely cause: on the 2-CPU
+  machine, the pods also waited for CPU behind the Kubernetes control plane and
+  k6. Validating it needs a machine with spare CPU.
+
 Next calibration steps:
-1. Model CFS quota throttling for pods with a CPU limit (the latency table
-   above is the target).
+1. Validate CFS throttling near the limit on a machine with spare CPU (≥ 4).
 2. Measure CPU per request (and set `cpuMsPerReq` from it).
 3. A smaller spike that peaks at 3 pods fits this 2 vCPU VPS; the full run needs
    a machine with ≥ 4 CPU.

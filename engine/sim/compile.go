@@ -36,6 +36,8 @@ type graph struct {
 	connPools []*connPool
 
 	live *live // time simulation only: faults, breakers, retries this tick
+
+	cfsCache map[cfsKey][]float64 // CFS wait samples per station and load level
 }
 
 // connPool is the client-side connection pool a service keeps to one callee.
@@ -134,8 +136,10 @@ type station struct {
 	kind     string
 	servers  int
 	speed    float64
-	host     *hosting // set for compute stations; servers resolved per evaluation
-	critical []string // param keys that determine its capacity (for confidence)
+	cfs      *cfsModel // CPU-limited pods: latency comes from cfsWaits
+	cfsW     []float64 // waits sampled at the evaluated load; nil = use the queue formulas
+	host     *hosting  // set for compute stations; servers resolved per evaluation
+	critical []string  // param keys that determine its capacity (for confidence)
 
 	// per evaluation
 	lambda, work, s2 float64
@@ -177,10 +181,19 @@ type hosting struct {
 	reqMem       float64 // bytes, for scheduling
 	maxConc      int     // in-flight requests per replica, 0 = unlimited
 	partitionCap int     // consumer parallelism limit from queue partitions, 0 = none
+	probe        *probe  // HTTP readiness probe (time simulation only)
 
 	// per evaluation
 	desired, scheduled, pending int
 	scaleCapped                 bool // autoscaler wanted more than max
+}
+
+// probe is a Kubernetes HTTP readiness probe. Its request queues behind the
+// pod's backlog, so it fails when that wait exceeds the timeout.
+type probe struct {
+	periodS             int
+	timeoutMs           float64
+	failures, successes int // consecutive results that flip Ready
 }
 
 type autoscale struct {
@@ -578,6 +591,7 @@ func (g *graph) buildNode(n *gnode) {
 func (g *graph) buildCompute(n *gnode) {
 	h := &hosting{svc: n, host: n.parent}
 	p := n.parent
+	var limit float64 // CPU limit of a Kubernetes pod, 0 = none
 	switch {
 	case p == nil:
 		h.cores = g.positive(n, "vcpu")
@@ -585,7 +599,7 @@ func (g *graph) buildCompute(n *gnode) {
 	case p.arch == catalog.Orchestrator:
 		h.reqCPU = g.cpuCores(p, "requests.cpu")
 		h.reqMem = g.memBytes(p, "requests.memory")
-		limit := g.cpuCores(p, "limits.cpu")
+		limit = g.cpuCores(p, "limits.cpu")
 		if !(h.reqCPU > 0) {
 			g.fail(fmt.Errorf("deployment %q: requests.cpu must be > 0", p.m.ID))
 			return
@@ -600,6 +614,20 @@ func (g *graph) buildCompute(n *gnode) {
 		} else {
 			g.issues = append(g.issues, Issue{Severity: SeverityInfo, Ref: p.m.ID,
 				Message: "no CPU limit: capacity assumes each pod uses exactly its CPU request (bursting above it is not counted)"})
+		}
+		switch kind := g.str(p, "readinessProbe.kind"); kind {
+		case "none", "tcp":
+		case "http":
+			h.probe = &probe{
+				periodS:   g.count(p, "readinessProbe.periodS", 1),
+				timeoutMs: 1000 * g.positive(p, "readinessProbe.timeoutS"),
+				failures:  g.count(p, "readinessProbe.failureThreshold", 1),
+				successes: g.count(p, "readinessProbe.successThreshold", 1),
+			}
+			g.issues = append(g.issues, Issue{Severity: SeverityInfo, Ref: p.m.ID,
+				Message: "the HTTP readiness probe acts only in the time simulation: under a backlog it can take pods out of the Service"})
+		default:
+			g.fail(fmt.Errorf("deployment %q: readinessProbe.kind must be none, http or tcp, got %q", p.m.ID, kind))
 		}
 		if g.has(p, "hpa") {
 			h.auto = &autoscale{kind: "hpa", min: g.count(p, "hpa.min", 1), max: g.count(p, "hpa.max", 1),
@@ -643,6 +671,12 @@ func (g *graph) buildCompute(n *gnode) {
 	n.host = h
 	n.st = g.newStation(n, "cpu", 0, h.speed, g.key(n, "runtimeMultiplier"))
 	n.st.host = h
+	// Only a limit below the threads' cores can throttle: one thread cannot
+	// use more than one core, so a 1-core limit on one thread never does.
+	if limit > 0 && limit < float64(h.k)-1e-9 {
+		period := g.positive(p, "cfsPeriodMs")
+		n.st.cfs = &cfsModel{threads: h.k, burst: h.uslFactor, quotaMs: limit * period, periodMs: period}
+	}
 	g.hosts = append(g.hosts, h)
 }
 

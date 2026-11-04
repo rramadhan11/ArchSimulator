@@ -108,11 +108,18 @@ func (g *graph) sample(v *visit, s *sampler, acc *mcAcc, reject []float64) (floa
 	if st := v.st; st != nil && st.meanS > 0 {
 		// Requests arriving during a tick see the backlog grow (or drain)
 		// from its level at the start to its level at the end.
-		w := s.wait(st.q) + st.fluidLoMs
+		w, speed := 0.0, st.speed
+		if st.cfsW != nil {
+			// CPU-limited pod: full core speed, plus queueing and throttling.
+			w, speed = st.cfsW[s.r.IntN(len(st.cfsW))], st.cfs.burst
+		} else {
+			w = s.wait(st.q)
+		}
+		w += st.fluidLoMs
 		if st.fluidMs != st.fluidLoMs {
 			w += s.r.Float64() * (st.fluidMs - st.fluidLoMs)
 		}
-		svc := s.gamma(v.serviceMs/st.speed, v.cs2)
+		svc := s.gamma(v.serviceMs/speed, v.cs2)
 		if acc.main {
 			acc.wait[n] += w
 			acc.service[n] += svc

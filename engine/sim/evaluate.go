@@ -40,7 +40,7 @@ func (g *graph) evaluate(tps float64, samples int, seed uint64) *Report {
 	g.resolveReplicas(r)
 
 	for _, st := range g.stations {
-		st.q, st.meanS, st.fluidMs, st.fluidLoMs = QueueStats{}, 0, 0, 0
+		st.q, st.meanS, st.fluidMs, st.fluidLoMs, st.cfsW = QueueStats{}, 0, 0, 0, nil
 		if st.lambda == 0 {
 			continue
 		}
@@ -51,6 +51,10 @@ func (g *graph) evaluate(tps float64, samples int, seed uint64) *Report {
 		}
 		st.meanS = mean / st.speed
 		st.q = Queue(st.lambda, st.meanS, cs2, st.servers)
+		st.cfsW = nil
+		if st.q.Stable() {
+			st.cfsW = g.cfsWaits(st, cs2)
+		}
 		if !st.q.Stable() {
 			r.Stable = false
 		}

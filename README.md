@@ -36,11 +36,11 @@ Product & technical plan: [PLAN.md](PLAN.md) (section 0 lists the v1.1 decisions
   anyone who finds the URL.
 
 Not modeled yet: memory pressure (OOM kills, eviction), callers' threads held by a hung
-dependency, retries in the quick check (the time simulation models them), and health
-checks failing under overload, and how Linux enforces CPU limits (CFS quota). The
-calibration lab ([lab/](lab/README.md), run on 2026-11-02) now matches the HPA's scale-out
-within one sync period and the errors of an overload; latency of pods with fractional CPU
-limits is still rough.
+dependency, retries in the quick check (the time simulation models them), and liveness
+probes (readiness probes are modeled in the time simulation). The calibration lab ([lab/](lab/README.md), run on
+2026-11-02) now matches the HPA's scale-out within one sync period, the errors of an
+overload, and the low-load latency of a pod under a fractional CPU limit (CFS quota);
+throttling near the limit is not validated yet.
 
 ## How it works
 
