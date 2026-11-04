@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"archsim/engine/catalog"
 	"archsim/engine/model"
@@ -60,5 +61,21 @@ func TestLabDesignLatencyUnderCPULimit(t *testing.T) {
 	}
 	if p50 := res.Target.Latency.P50Ms; p50 < 3.5 || p50 > 5 {
 		t.Errorf("p50 = %.1f ms, want ~4 (full core speed, rarely throttled)", p50)
+	}
+}
+
+// At very low load (as the max-TPS search probes) the simulation skips idle
+// periods instead of stepping through each one.
+func TestCFSLowLoadIsFast(t *testing.T) {
+	m := &cfsModel{threads: 1, burst: 1, quotaMs: 25, periodMs: 100}
+	start := time.Now()
+	waits := simulateCFS(0.01, 4, 0, m, 1) // one 4 ms request per 100 s
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("took %v", d)
+	}
+	for _, w := range waits {
+		if w > 1e-9 {
+			t.Fatalf("a request well under the quota on an idle pod must not wait, got %v ms", w)
+		}
 	}
 }

@@ -1,7 +1,7 @@
 // Printable report of a design and its latest results: a self-contained HTML
 // page (no scripts) the browser can print or save as PDF. Every value from
 // the design is escaped: names come from user input or shared links.
-import type { Architecture, Assumption, Result, Timeline } from '../engine/types'
+import type { Architecture, Assumption, Cost, Result, Timeline } from '../engine/types'
 
 export interface ReportInput {
   name: string
@@ -115,7 +115,29 @@ ${table(
   ['Component', 'Visits', 'Network', 'Queue wait', 'Service', 'Delay'],
   (t.hops ?? []).map((h) => [esc(h.node), num(h.visitsPerRequest, 2), ms(h.networkMs), ms(h.waitMs), ms(h.serviceMs), ms(h.delayMs)]),
 )}
+${t.cost ? costSection(t.cost) : ''}
 ${t.issues?.length ? `<h3>Issues</h3><ul>${t.issues.map((i) => `<li><b>${esc(i.severity)}</b> <code>${esc(i.ref)}</code>: ${esc(i.message)}</li>`).join('')}</ul>` : ''}`
+}
+
+const usd = (n: number | null | undefined, digits = 0) => (n === null || n === undefined ? '–' : `$${num(n, digits)}`)
+
+/** Exported for tests. */
+export function costSection(c: Cost): string {
+  return `
+<h3>Cost (on-demand, instances only)</h3>
+${table(
+  ['Component', 'Instances', 'Rate', 'Per month (730 h)'],
+  [
+    ...c.items.map((it) => [
+      `<code>${esc(it.node)}</code>`,
+      `${num(it.count)} × <code>${esc(it.rate)}</code>`,
+      it.hourlyUSD === null ? 'no rate set' : `${usd(it.hourlyUSD, 4)}/h${it.source === 'yours' ? ' (design rate)' : ''}`,
+      usd(it.monthlyUSD),
+    ]),
+    ['<b>Total</b>', '', '', `<b>${usd(c.monthlyUSD)}</b>${c.unpriced?.length ? ` + ${esc(c.unpriced.join(', '))} (no rate)` : ''}`],
+  ],
+)}
+<p class="note">Load balancers, queues, caches, external APIs, storage and traffic are not included.</p>`
 }
 
 function timeline(tl: Timeline, base?: Timeline): string {
@@ -127,10 +149,10 @@ function timeline(tl: Timeline, base?: Timeline): string {
   return `
 <h2>Time simulation</h2>
 ${table(
-  ['', 'Peak p99', 'Max error rate', 'SLO broken', 'First breach'],
+  ['', 'Peak p99', 'Max error rate', 'SLO broken', 'First breach', 'Cost of the window'],
   [
-    ['This design', ms(s.peakP99Ms), pct(s.maxErrorRate, 2), `${num(s.sloBreachS)} s`, s.firstBreachS === null ? '–' : `t = ${num(s.firstBreachS)} s`],
-    ...(b ? [['Baseline', ms(b.peakP99Ms), pct(b.maxErrorRate, 2), `${num(b.sloBreachS)} s`, b.firstBreachS === null ? '–' : `t = ${num(b.firstBreachS)} s`]] : []),
+    ['This design', ms(s.peakP99Ms), pct(s.maxErrorRate, 2), `${num(s.sloBreachS)} s`, s.firstBreachS === null ? '–' : `t = ${num(s.firstBreachS)} s`, usd(s.costUSD, 2)],
+    ...(b ? [['Baseline', ms(b.peakP99Ms), pct(b.maxErrorRate, 2), `${num(b.sloBreachS)} s`, b.firstBreachS === null ? '–' : `t = ${num(b.firstBreachS)} s`, usd(b.costUSD, 2)]] : []),
   ],
 )}
 ${tl.failures?.length ? `<h3>Injected failures</h3><ul>${tl.failures.map((f) => `<li>t = ${num(f.startS)} s: <code>${esc(f.target ?? 'zone')}</code> ${esc(f.label)}${f.endS === null ? ' (until the end)' : f.endS > f.startS ? ` until ${num(f.endS)} s` : ''}</li>`).join('')}</ul>` : ''}

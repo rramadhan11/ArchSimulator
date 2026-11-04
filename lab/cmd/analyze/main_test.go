@@ -33,7 +33,7 @@ func TestAnalyzeSyntheticRun(t *testing.T) {
 	  {"t": 2, "offeredTps": 1, "errorRate": 0, "latency": {"p99Ms": 14}, "replicas": [{"desired": 2, "ready": 2}]}]}`)
 
 	var out strings.Builder
-	if err := run(dir, &out); err != nil {
+	if err := run(dir, "sim.json", &out); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()

@@ -107,6 +107,11 @@ type TimelineSummary struct {
 	// SLOBreachS counts seconds where p99 or the error rate broke the SLO.
 	SLOBreachS   float64  `json:"sloBreachS"`
 	FirstBreachS *float64 `json:"firstBreachS"`
+	// CostUSD is what the priced instances cost over the simulated window:
+	// nodes and VMs count from when they are requested (booting is billed),
+	// databases throughout. Nil when nothing in the design is billed.
+	CostUSD      *float64 `json:"costUSD,omitempty"`
+	CostUnpriced []string `json:"costUnpriced,omitempty"`
 }
 
 // Simulate runs the time simulation configured in workload.timeline.
@@ -144,7 +149,7 @@ type simState struct {
 	offered []float64    // per visit, visits/s this tick
 	served  []float64    // per visit, visits/s this tick
 	reject  []float64    // per node, probability a visit is refused this tick
-	probed  []*hostState // per node: the service's host when it has a readiness probe
+	probed  []*hostState // per node: the service's host when a failed readiness probe stops its traffic
 	wasBusy []bool       // per output station, backlog at the previous tick
 
 	lv          *live
@@ -200,11 +205,14 @@ type hostState struct {
 	fresh    []float64 // HPA: ready-at times of replicas without a metric since, oldest first
 	young    []float64 // HPA: ready-at times of replicas younger than initS, oldest first
 
-	// HTTP readiness probe: all replicas share the backlog, so they pass or
-	// fail together. Not Ready replicas get no new traffic but finish their
-	// backlog.
+	// HTTP probes: all replicas share the backlog, so they pass or fail
+	// together. Not Ready replicas get no new traffic (unless it comes on
+	// keep-alive connections) but finish their backlog.
 	notReady         bool
 	probeFails, oked int
+	liveFails        int
+	restarts         int     // in the current back-off series
+	lastRestart      float64 // when the containers last restarted
 	recs             []recommendation
 	pending          int
 	pinned           bool
@@ -292,7 +300,7 @@ func (g *graph) newSimState(w model.Workload) *simState {
 		if hs.sc != nil {
 			hs.recs = []recommendation{{0, hs.desired}}
 		}
-		if h.probe != nil {
+		if h.readiness != nil && !h.readiness.keepalive {
 			s.probed[h.svc.idx] = hs
 		}
 		s.hosts = append(s.hosts, hs)
@@ -407,12 +415,59 @@ func (s *simState) step(i int, tps float64) {
 		tick.Latency = &mc.latency
 	}
 	s.settleCalls(i, t)
-	s.probeReadiness(i, t)
+	s.checkMemory(t, mc)
+	s.probe(i, t)
 	if i > 0 {
 		s.autoscale(i, t)
 	}
 	s.record(&tick)
+	s.bill()
 	s.out.Ticks = append(s.out.Ticks, tick)
+}
+
+// bill adds one tick of the running instances to the window's cost.
+func (s *simState) bill() {
+	sum := &s.out.Summary
+	for i := range s.g.billables {
+		b := &s.g.billables[i]
+		if b.src == "" {
+			if !slices.Contains(sum.CostUnpriced, b.rate) {
+				sum.CostUnpriced = append(sum.CostUnpriced, b.rate)
+			}
+			continue
+		}
+		n := b.fixed
+		switch {
+		case b.pool != nil:
+			ps := s.poolState(b.pool)
+			n = ps.ready + len(ps.provisioning)
+		case b.host != nil:
+			hs := s.hostState(b.host)
+			n = hs.ready + len(hs.starting)
+		}
+		if sum.CostUSD == nil {
+			sum.CostUSD = ptr(0.0)
+		}
+		*sum.CostUSD += b.usd * float64(n) * tickS / 3600
+	}
+}
+
+func (s *simState) poolState(p *nodePool) *poolState {
+	for _, ps := range s.pools {
+		if ps.p == p {
+			return ps
+		}
+	}
+	panic("pool without state")
+}
+
+func (s *simState) hostState(h *hosting) *hostState {
+	for _, hs := range s.hosts {
+		if hs.h == h {
+			return hs
+		}
+	}
+	panic("host without state")
 }
 
 // provision moves replicas and nodes whose startup delay has elapsed to ready.
@@ -746,17 +801,64 @@ func (s *simState) autoscale(i int, t float64) {
 	}
 }
 
-// probeReadiness runs the HTTP readiness probes due at tick i. A probe
+// Kubernetes restarts a container after an exponential back-off (10 s, 20 s,
+// 40 s, ... up to 5 min), reset once it has run 10 minutes without problems.
+// https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-restarts
+const (
+	restartBackoffS    = 10
+	restartBackoffMaxS = 300
+	restartResetS      = 600
+)
+
+// checkMemory OOMKills the replicas of a memory-limited Deployment whose
+// estimated memory exceeds the limit. A replica holds its share of the
+// backlog plus the requests it serves for as long as they stay (Little's
+// law, without the backlog wait already counted as backlog).
+func (s *simState) checkMemory(t float64, mc *mcResult) {
+	for _, hs := range s.hosts {
+		m := hs.h.mem
+		if m == nil || hs.ready == 0 {
+			continue
+		}
+		svc := hs.h.svc
+		held := math.Max(0, mc.meanResidence(svc.idx)-(svc.st.fluidLoMs+svc.st.fluidMs)/2) / 1000
+		inFlight := 0.0
+		for _, v := range s.byNode[svc.idx] {
+			inFlight += s.backlog[v.idx] + s.served[v.idx]*held
+		}
+		if mib := m.mib(inFlight / float64(hs.ready)); mib > m.limitMiB {
+			s.restart(hs, t, fmt.Sprintf("OOMKilled (memory %.0f MiB > %.0f MiB limit with %.0f queued or in-flight requests per pod)",
+				mib, m.limitMiB, inFlight/float64(hs.ready)))
+		}
+	}
+}
+
+// probe runs the HTTP readiness and liveness probes due at tick i. A probe
 // fails when the wait behind the backlog at the end of the tick exceeds its
 // timeout; the queue's own stochastic wait (far below a timeout of seconds
 // unless the backlog builds) is not counted.
-func (s *simState) probeReadiness(i int, t float64) {
+func (s *simState) probe(i int, t float64) {
 	for _, hs := range s.hosts {
-		pr := hs.h.probe
-		if pr == nil || hs.ready == 0 || i%pr.periodS != 0 {
+		if hs.ready == 0 {
 			continue
 		}
 		waitMs := hs.h.svc.st.fluidMs
+		if lp := hs.h.liveness; lp != nil && i%lp.periodS == 0 {
+			if waitMs > lp.timeoutMs {
+				hs.liveFails++
+			} else {
+				hs.liveFails = 0
+			}
+			if hs.liveFails >= lp.failures {
+				s.restart(hs, t, fmt.Sprintf("liveness probe failed %d× (backlog wait %s > %s timeout)",
+					hs.liveFails, fmtMs(waitMs), fmtMs(lp.timeoutMs)))
+				continue
+			}
+		}
+		pr := hs.h.readiness
+		if pr == nil || i%pr.periodS != 0 {
+			continue
+		}
 		if waitMs > pr.timeoutMs {
 			hs.probeFails, hs.oked = hs.probeFails+1, 0
 		} else {
@@ -765,13 +867,44 @@ func (s *simState) probeReadiness(i int, t float64) {
 		switch {
 		case !hs.notReady && hs.probeFails >= pr.failures:
 			hs.notReady = true
-			s.event(t, hs.ref, "readiness probe failed %d× (backlog wait %s > %s timeout): pods leave the Service, new requests fail",
-				hs.probeFails, fmtMs(waitMs), fmtMs(pr.timeoutMs))
+			effect := "pods leave the Service, new requests fail"
+			if pr.keepalive {
+				effect = "pods leave the Service, but open keep-alive connections keep sending to them"
+			}
+			s.event(t, hs.ref, "readiness probe failed %d× (backlog wait %s > %s timeout): %s",
+				hs.probeFails, fmtMs(waitMs), fmtMs(pr.timeoutMs), effect)
 		case hs.notReady && hs.oked >= pr.successes:
 			hs.notReady = false
 			s.event(t, hs.ref, "readiness probe passes: pods are back in the Service")
 		}
 	}
+}
+
+// restart kills the containers (failed liveness probe, OOMKilled): their
+// queued requests are lost, and the kubelet starts them again after the
+// back-off plus the usual startup. The restarted pods start over as not yet
+// Ready.
+func (s *simState) restart(hs *hostState, t float64, cause string) {
+	if hs.restarts > 0 && t-hs.lastRestart > restartResetS {
+		hs.restarts = 0
+	}
+	backoff := math.Min(restartBackoffS*math.Pow(2, float64(hs.restarts)), restartBackoffMaxS)
+	hs.restarts++
+	hs.lastRestart = t
+	n := hs.ready
+	s.event(t, hs.ref, "%s: %d container(s) restart in %.0fs, queued requests are lost", cause, n, backoff+hs.startupS)
+	hs.ready = 0
+	for range n {
+		at := t + backoff + hs.startupS
+		k, _ := slices.BinarySearch(hs.starting, at)
+		hs.starting = slices.Insert(hs.starting, k, at)
+	}
+	for _, v := range s.byNode[hs.h.svc.idx] {
+		if v.st == hs.h.svc.st {
+			s.backlog[v.idx] = 0
+		}
+	}
+	hs.liveFails, hs.probeFails, hs.oked, hs.notReady = 0, 0, 0, false
 }
 
 // hpaRecommend follows the Kubernetes HPA replica calculation for CPU
@@ -843,7 +976,11 @@ func (s *simState) hpaRecommend(hs *hostState, i int, t float64) (ratio float64,
 
 func (s *simState) record(tick *Tick) {
 	for _, hs := range s.hosts {
-		tick.Replicas = append(tick.Replicas, ReplicaTick{Desired: hs.desired, Ready: hs.ready})
+		ready := hs.ready
+		if hs.notReady { // running, but failing the readiness probe
+			ready = 0
+		}
+		tick.Replicas = append(tick.Replicas, ReplicaTick{Desired: hs.desired, Ready: ready})
 	}
 	for k, st := range s.stations {
 		backlog := 0.0

@@ -19,9 +19,17 @@ type Architecture struct {
 	Nodes          []Node   `json:"nodes"`
 	Edges          []Edge   `json:"edges"`
 	Workload       Workload `json:"workload"`
+	// Pricing overrides the catalog's instance prices for cost estimates.
+	Pricing *Pricing `json:"pricing,omitempty"`
 	// UI is editor state (canvas positions, sizes). The engines ignore it;
 	// it lives here so a design stays one self-contained file.
 	UI json.RawMessage `json:"ui,omitempty"`
+}
+
+// Pricing holds the design's own rates: on-demand USD per instance hour,
+// keyed like the catalog's hourlyUSD ("m6i.large", "db.r6g.large/postgres").
+type Pricing struct {
+	HourlyUSD map[string]float64 `json:"hourlyUSD,omitempty"`
 }
 
 // Node is one component on the canvas. Config keys are catalog parameters;
@@ -353,6 +361,13 @@ func (a *Architecture) Validate() error {
 
 	if a.Version != SchemaVersion {
 		add("version %q is not supported (expected %q)", a.Version, SchemaVersion)
+	}
+	if a.Pricing != nil {
+		for key, usd := range a.Pricing.HourlyUSD {
+			if usd < 0 || math.IsNaN(usd) || math.IsInf(usd, 0) {
+				add("pricing.hourlyUSD %q: must be a number >= 0", key)
+			}
+		}
 	}
 
 	ids := make(map[string]bool, len(a.Nodes))

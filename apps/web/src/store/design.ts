@@ -1,7 +1,7 @@
 import { applyEdgeChanges, applyNodeChanges, type EdgeChange, type NodeChange, type XYPosition } from '@xyflow/react'
 import { create } from 'zustand'
 import { EngineError, engine } from '../engine/client'
-import type { Architecture, Catalog, Config, Result, Timeline, Workload } from '../engine/types'
+import type { Architecture, Catalog, Config, Pricing, Result, Timeline, Workload } from '../engine/types'
 import {
   archetypeOf,
   canContain,
@@ -55,6 +55,7 @@ interface DesignState {
   nodes: FlowNode[]
   edges: FlowEdge[]
   workload: Workload
+  pricing: Pricing | undefined
   selection: Selection
   check: Status<Result>
   timeline: Status<Timeline>
@@ -84,6 +85,8 @@ interface DesignState {
   renameNode(from: string, to: string): string | undefined
   updateEdge(id: string, patch: Partial<EdgeData>): void
   updateWorkload(patch: Partial<Workload>): void
+  /** Sets the design's own rate for a pricing key; undefined goes back to the catalog's. */
+  setRate(key: string, usd: number | undefined): void
   remove(sel: NonNullable<Selection>): void
   runCheck(): Promise<void>
   runTimeline(): Promise<void>
@@ -97,6 +100,7 @@ export const useDesign = create<DesignState>()((set, get) => ({
   nodes: [],
   edges: [],
   workload: { entry: '', targetTps: 100 },
+  pricing: undefined,
   selection: null,
   check: { state: 'idle' },
   timeline: { state: 'idle' },
@@ -104,8 +108,8 @@ export const useDesign = create<DesignState>()((set, get) => ({
   server: null,
 
   load(d, link) {
-    const { nodes, edges, workload } = fromArchitecture(d.architecture, get().catalog)
-    set({ name: d.name, nodes, edges, workload, selection: null, check: { state: 'idle' }, timeline: { state: 'idle' } })
+    const { nodes, edges, workload, pricing } = fromArchitecture(d.architecture, get().catalog)
+    set({ name: d.name, nodes, edges, workload, pricing, selection: null, check: { state: 'idle' }, timeline: { state: 'idle' } })
     setServerLink(link ? { ...link, savedKey: designKey() } : null)
   },
 
@@ -132,7 +136,7 @@ export const useDesign = create<DesignState>()((set, get) => ({
 
   architecture() {
     const s = get()
-    return toArchitecture(s.nodes, s.edges, s.workload, s.catalog.version)
+    return toArchitecture(s.nodes, s.edges, s.workload, s.catalog.version, s.pricing)
   },
 
   setName: (name) => set({ name }),
@@ -229,6 +233,13 @@ export const useDesign = create<DesignState>()((set, get) => ({
     const w: Workload = { ...get().workload, ...patch }
     for (const k of Object.keys(w) as (keyof Workload)[]) if (w[k] === undefined) delete w[k]
     set({ workload: w })
+  },
+
+  setRate(key, usd) {
+    const rates = { ...get().pricing?.hourlyUSD }
+    if (usd === undefined) delete rates[key]
+    else rates[key] = usd
+    set({ pricing: Object.keys(rates).length ? { hourlyUSD: rates } : undefined })
   },
 
   remove(sel) {
@@ -373,7 +384,7 @@ let lastEngineKey = ''
 export function startAutoEffects() {
   lastEngineKey = JSON.stringify(engineView(useDesign.getState().architecture()))
   return useDesign.subscribe((s, prev) => {
-    if (s.nodes === prev.nodes && s.edges === prev.edges && s.workload === prev.workload && s.name === prev.name) return
+    if (s.nodes === prev.nodes && s.edges === prev.edges && s.workload === prev.workload && s.pricing === prev.pricing && s.name === prev.name) return
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => saveLocal(savedDesign()), 300)
 

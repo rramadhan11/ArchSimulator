@@ -71,11 +71,30 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
           <li>
             <b>Readiness probes</b> (Deployments with <Mono>readinessProbe.kind: http</Mono>): the probe request waits behind the pod&apos;s backlog, so it fails once that wait exceeds its timeout. After
             the failure threshold the pods leave the Service and new requests fail at once, while the pods finish their backlog; the probe then passes and traffic returns, so an overloaded Deployment
-            flaps. A not-Ready pod younger than 5 minutes gives the HPA no CPU metric. TCP probes are answered by the kernel and never fail from load.
+            flaps. If clients reach the pods through kube-proxy on keep-alive connections (<Mono>notReadyTraffic: keepalive</Mono>), the traffic keeps coming and only the HPA notices. A not-Ready pod
+            younger than 5 minutes gives the HPA no CPU metric. A failing HTTP <b>liveness probe</b> restarts the containers: their queued requests are lost and restarts back off 10 s, 20 s, 40 s… up to 5
+            minutes. TCP probes are answered by the kernel and never fail from load.
+          </li>
+          <li>
+            <b>Memory</b> (Deployments with <Mono>limits.memory</Mono>): a replica uses its idle baseline plus what each queued or in-flight request holds (Little&apos;s law, including time waiting on
+            downstream calls). The quick check reports it against the limit (warning from the overload threshold, overload at 100%); in the time simulation a backlog that pushes it over the limit
+            OOMKills the containers, which then restart like after a liveness failure. Both memory parameters are rough estimates per runtime: measure them.
           </li>
           <li>
             <b>Failure injection</b>: lost nodes/VMs/pods (controllers replace what they manage after their usual delay), a zone outage, a dependency that errors or hangs, added latency, and database failover.
           </li>
+        </Part>
+
+        <Part title="Cost">
+          <li>
+            What is billed per instance hour: node pools (nodes running: at least the minimum, more when the cluster autoscaler needs them), VM groups (their instances) and managed databases
+            (primary plus read replicas). A month is 730 hours; the time simulation adds up the nodes and VMs running each second, booting ones included.
+          </li>
+          <li>
+            Current rates are AWS on-demand prices for Jakarta (ap-southeast-3) from AWS&apos;s published price list. Types AWS does not offer there, Google Cloud types and generic shapes have no
+            current rate: set your own under <b>Edit rates</b> (also for discounts, another region or your own servers). A component without a rate is listed, never counted as free.
+          </li>
+          <li>Not included: load balancers, queues, caches, external APIs, storage, data transfer, support plans and taxes.</li>
         </Part>
 
         <Part title="Where parameters come from">
@@ -91,11 +110,13 @@ export function Methodology({ open, onClose }: { open: boolean; onClose: () => v
         </Part>
 
         <Part title="Not modeled (yet)">
-          <li>Memory pressure: OOM kills, eviction, garbage-collection pauses beyond the latency variability parameter.</li>
+          <li>
+            Node memory pressure and eviction (only a container&apos;s own memory limit is modeled), and garbage-collection pauses beyond the latency variability parameter.
+          </li>
           <li>Threads or connections a caller holds while waiting on a slow or hung dependency (so the caller does not saturate from waiting alone).</li>
           <li>
-            Liveness probes (a failing one restarts the container and loses its work), and clients that keep connections open: kube-proxy only stops new connections to a not-Ready pod, so keep-alive
-            traffic keeps reaching it. ArchSim stops all traffic, as an L7 proxy (Ingress, Envoy, Kong) does. All replicas of a Deployment pass or fail their probe together.
+            Probes per pod: all replicas of a Deployment pass or fail their probes together, and a liveness failure restarts all of them. Pods are assumed long-running when the simulation starts (a fresh
+            rollout would leave the HPA without metrics for longer).
           </li>
           <li>Retries and circuit breakers in the quick check; they act in the time simulation only.</li>
           <li>Cost, cold caches warming up, noisy neighbours, and network failures between zones.</li>

@@ -4,7 +4,13 @@
 # compares what happened with ArchSim's simulation of design.json.
 #
 #   lab/run.sh          run the experiment (asks first; LAB_YES=1 skips)
+#   lab/run.sh small    the same with a spike to 90 req/s and at most 3 pods
+#                       (design-small.json): fits a 2-CPU machine
 #   lab/run.sh clean    delete the kind cluster
+#
+# Before the spike, 60 s at 30 req/s measure the CPU a request really costs
+# (the pod's cgroup cpu.stat); the simulation runs once with the design's
+# cpuMsPerReq and once with the measured one.
 #
 # Needs Docker, kubectl and Go. kind and k6 run from pinned versions
 # (go run / docker image), nothing is installed. Everything runs inside
@@ -21,14 +27,16 @@ IMAGE=archsim-lab-work:dev
 kind() { go run "sigs.k8s.io/kind@$KIND_VERSION" "$@"; }
 k() { kubectl --context "kind-$CLUSTER" "$@"; }
 
+PEAK=120 DESIGN=design.json MAX_PODS=4
 case "${1:-run}" in
   clean)
     kind delete cluster --name "$CLUSTER"
     exit 0
     ;;
   run) ;;
+  small) PEAK=90 DESIGN=design-small.json MAX_PODS=3 ;;
   *)
-    echo "usage: $0 [run|clean]" >&2
+    echo "usage: $0 [run|small|clean]" >&2
     exit 2
     ;;
 esac
@@ -42,7 +50,8 @@ cat <<INFO
 This will:
   - create kind cluster "$CLUSTER" (one node) and install metrics-server
   - build and load the reference service image ($IMAGE)
-  - run k6 for ~8 minutes: 30 req/s, spike to 120 req/s (pods use at most 4 x 0.25 CPU)
+  - measure CPU per request for 60 s at 30 req/s
+  - run k6 for ~8 minutes: 30 req/s, spike to $PEAK req/s (pods use at most $MAX_PODS x 0.25 CPU)
 Docker has $cpus CPU / ~${mem_gib} GiB. The lab needs ~2 GiB and requests ~2 CPU
 (~1 for Kubernetes' own pods, 1 for the service), and uses ~1-1.2 CPU at the peak.
 Delete everything afterwards with: $0 clean
@@ -61,7 +70,7 @@ if [ "${LAB_YES:-}" != 1 ]; then
 fi
 
 mkdir -p results
-rm -f results/k6.csv results/pods.csv results/sim.json
+rm -f results/*
 
 if ! kind get clusters | grep -qx "$CLUSTER"; then
   kind create cluster --name "$CLUSTER" --config k8s/kind.yaml
@@ -78,6 +87,7 @@ fi
 k -n kube-system rollout status deploy/metrics-server --timeout=180s
 
 k apply -f k8s/app.yaml
+k patch hpa work -p "{\"spec\":{\"maxReplicas\":$MAX_PODS}}"
 k rollout status deploy/work --timeout=180s
 # Start from the steady state ArchSim starts from: the HPA has metrics and
 # runs one ready pod. After a previous run its 300 s scale-down
@@ -87,6 +97,30 @@ until k get hpa work -o jsonpath='{.status.currentMetrics[0].resource.current.av
   && [ "$(k get deploy work -o jsonpath='{.spec.replicas}/{.status.readyReplicas}')" = 1/1 ]; do
   sleep 5
 done
+
+k6() {
+  docker run --rm --network kind --user "$(id -u):$(id -g)" \
+    -v "$PWD/k6:/scripts:ro" -v "$PWD/results:/results" \
+    -e TARGET="http://$CLUSTER-control-plane:30080/work" -e PEAK="$PEAK" \
+    "$K6_IMAGE" run --quiet "$@"
+}
+
+# CPU per request: the pod's cgroup CPU time over a steady run, divided by
+# the requests k6 completed. Includes HTTP handling and the Go runtime.
+uid=$(k get pod -l app=work -o jsonpath='{.items[0].metadata.uid}')
+cgroup=$(docker exec "$CLUSTER-control-plane" sh -c "find /sys/fs/cgroup -type d -name '*pod${uid//-/_}*' | head -1")
+[ -n "$cgroup" ] || { echo "cgroup of pod $uid not found" >&2; exit 1; }
+usec() { docker exec "$CLUSTER-control-plane" awk '/^usage_usec/ {print $2}' "$cgroup/cpu.stat"; }
+before=$(usec)
+k6 --out csv=/results/steady.csv /scripts/steady.js
+after=$(usec)
+requests=$(grep -c '^http_reqs,' results/steady.csv)
+cpu_ms=$(awk -v d=$((after - before)) -v n="$requests" 'BEGIN { printf "%.2f", d / 1000 / n }')
+echo "cpu_ms_per_request=$cpu_ms requests=$requests" | tee results/cpu.txt
+sed "s/\"cpuMsPerReq\": [0-9.]*/\"cpuMsPerReq\": $cpu_ms/" "$DESIGN" > results/design-measured.json
+grep -q "\"cpuMsPerReq\": $cpu_ms" results/design-measured.json
+# Let the HPA settle at 1 pod again before the spike.
+until [ "$(k get deploy work -o jsonpath='{.spec.replicas}/{.status.readyReplicas}')" = 1/1 ]; do sleep 5; done
 
 # Replica counts once per second, next to k6's per-request samples.
 (
@@ -98,13 +132,17 @@ done
 watcher=$!
 trap 'kill $watcher 2>/dev/null || true' EXIT
 
-docker run --rm --network kind --user "$(id -u):$(id -g)" \
-  -v "$PWD/k6:/scripts:ro" -v "$PWD/results:/results" \
-  -e TARGET="http://$CLUSTER-control-plane:30080/work" \
-  "$K6_IMAGE" run --quiet --out csv=/results/k6.csv /scripts/spike.js
+k6 --out csv=/results/k6.csv /scripts/spike.js
 kill "$watcher"
 
-(cd .. && go run ./engine/cmd/archsim simulate --json lab/design.json) > results/sim.json
-(cd .. && go run ./lab/cmd/analyze lab/results) | tee results/report.txt
+(cd .. && go run ./engine/cmd/archsim simulate --json "lab/$DESIGN") > results/sim.json
+(cd .. && go run ./engine/cmd/archsim simulate --json lab/results/design-measured.json) > results/sim-measured.json
+{
+  echo "== $DESIGN (cpuMsPerReq as designed)"
+  (cd .. && go run ./lab/cmd/analyze lab/results sim.json)
+  echo
+  echo "== measured cpuMsPerReq $cpu_ms"
+  (cd .. && go run ./lab/cmd/analyze lab/results sim-measured.json)
+} | tee results/report.txt
 echo
 echo "Report saved to lab/results/report.txt. Delete the cluster with: $0 clean"

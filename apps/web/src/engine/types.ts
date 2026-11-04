@@ -111,7 +111,13 @@ export interface Architecture {
   nodes: ModelNode[]
   edges: ModelEdge[]
   workload: Workload
+  /** The design's own rates, overriding the catalog's (USD per instance hour). */
+  pricing?: Pricing
   ui?: EditorUI
+}
+
+export interface Pricing {
+  hourlyUSD?: Record<string, number>
 }
 
 // ---- catalog ----
@@ -160,6 +166,9 @@ export interface Catalog {
   components: Record<string, Component>
   instances: Record<string, { vcpu: number; memoryGiB: number }>
   instancesSource: Source
+  /** On-demand USD per instance hour; databases are keyed "<type>/<engine>". */
+  hourlyUSD: Record<string, number>
+  pricesSource: Source
   networkClasses: Record<string, { rttMs: number; bandwidthMbps: number; source: Source }>
   protocols: Record<string, { serializeMsPerKB: number; multiplexed: boolean; defaultPoolSize: number; source: Source }>
   profiles: Record<string, { cpuMsPerReq: number; ioWaitMs: number; source: Source }>
@@ -244,6 +253,7 @@ export interface Report {
   async?: { edge: string; p50Ms: number; p99Ms: number }[]
   /** First-attempt calls per second each edge carries at the target TPS. */
   edges?: { edge: string; callsPerS: number }[]
+  cost?: Cost
   replicas?: ReplicaReport[]
   nodePools?: PoolReport[]
   issues?: Issue[]
@@ -257,6 +267,13 @@ export interface Result {
   maxSustainableTps: number | null
   limitedBy: string
   saturationOrder: ResourceReport[] | null
+}
+
+/** Steady-state bill at the target TPS: node pools, VM groups, databases. */
+export interface Cost {
+  monthlyUSD: number
+  items: { node: string; rate: string; count: number; hourlyUSD: number | null; monthlyUSD: number | null; source?: 'yours' | 'catalog' }[]
+  unpriced?: string[]
 }
 
 // ---- time simulation ----
@@ -298,7 +315,15 @@ export interface Timeline {
   failures?: FailureSpan[]
   ticks: Tick[]
   events: { t: number; ref: string; message: string }[] | null
-  summary: { peakP99Ms: number | null; maxErrorRate: number; sloBreachS: number; firstBreachS: number | null }
+  summary: {
+    peakP99Ms: number | null
+    maxErrorRate: number
+    sloBreachS: number
+    firstBreachS: number | null
+    /** Priced instances over the simulated window (booting nodes and VMs included). */
+    costUSD?: number
+    costUnpriced?: string[]
+  }
   issues?: Issue[]
   assumptions: Assumption[]
 }

@@ -38,6 +38,7 @@ type Report struct {
 	Hops        []HopReport      `json:"hops"`
 	Async       []AsyncReport    `json:"async,omitempty"`
 	Edges       []EdgeReport     `json:"edges,omitempty"`
+	Cost        *Cost            `json:"cost,omitempty"`
 	Replicas    []ReplicaReport  `json:"replicas,omitempty"`
 	NodePools   []PoolReport     `json:"nodePools,omitempty"`
 	Issues      []Issue          `json:"issues,omitempty"`
@@ -71,6 +72,9 @@ type ResourceReport struct {
 	Note            string `json:"note,omitempty"`
 
 	critical []string
+	// hard: exceeding the capacity fails outright (memory: OOMKilled), so the
+	// overload threshold is 100% and the warning one the usual overload one.
+	hard bool
 }
 
 // HopReport is the mean contribution of one node to a request (averaged over

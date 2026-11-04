@@ -56,17 +56,21 @@ const (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: analyze <results dir>")
+	if len(os.Args) < 2 || len(os.Args) > 3 {
+		fmt.Fprintln(os.Stderr, "usage: analyze <results dir> [simulation file in it, default sim.json]")
 		os.Exit(2)
 	}
-	if err := run(os.Args[1], os.Stdout); err != nil {
+	simFile := "sim.json"
+	if len(os.Args) == 3 {
+		simFile = os.Args[2]
+	}
+	if err := run(os.Args[1], simFile, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "analyze:", err)
 		os.Exit(1)
 	}
 }
 
-func run(dir string, out io.Writer) error {
+func run(dir, simFile string, out io.Writer) error {
 	obs, t0, err := readK6(filepath.Join(dir, "k6.csv"))
 	if err != nil {
 		return err
@@ -74,7 +78,7 @@ func run(dir string, out io.Writer) error {
 	if err := readPods(filepath.Join(dir, "pods.csv"), t0, obs); err != nil {
 		return err
 	}
-	pred, err := readSim(filepath.Join(dir, "sim.json"))
+	pred, err := readSim(filepath.Join(dir, simFile))
 	if err != nil {
 		return err
 	}

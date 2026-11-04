@@ -5,6 +5,7 @@ params:
   replicas: { default: 2, description: "Used when no hpa block is configured", source: { kind: default-estimate } }
   requests.cpu: { default: "500m", source: { kind: default-estimate } }
   requests.memory: { default: "512Mi", source: { kind: default-estimate } }
+  limits.memory: { default: "", description: "Empty = no memory limit. Above it the container is OOMKilled and restarts (time simulation); the quick check reports memory use against it", source: { kind: default-estimate } }
   limits.cpu: { default: "", description: "Empty = no CPU limit; capacity then assumes the pod uses its request", source: { kind: default-estimate } }
   hpa.min: { default: 1, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/", note: "minReplicas defaults to 1" } }
   hpa.max: { default: 10, source: { kind: default-estimate } }
@@ -19,6 +20,19 @@ params:
   readinessProbe.timeoutS: { default: 1, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "timeoutSeconds defaults to 1" } }
   readinessProbe.failureThreshold: { default: 3, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "failureThreshold defaults to 3" } }
   readinessProbe.successThreshold: { default: 1, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "successThreshold defaults to 1" } }
+  readinessProbe.notReadyTraffic:
+    default: stop
+    options: [stop, keepalive]
+    description: "stop: an L7 proxy (Ingress, Envoy, Kong) stops sending to a not-Ready pod. keepalive: clients reach the pods through kube-proxy on open keep-alive connections, which keep reaching a not-Ready pod (kube-proxy only stops new connections)."
+    source: { kind: default-estimate, note: "Depends on how traffic reaches the Service; seen in the calibration lab (lab/README.md, run 1)" }
+  livenessProbe.kind:
+    default: none
+    options: [none, http, tcp]
+    description: "http: the probe queues with the traffic; after failureThreshold failures the kubelet restarts the container, its queued requests are lost, and restarts back off (time simulation only)"
+    source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/", note: "Without a liveness probe the kubelet restarts a container only when it exits" }
+  livenessProbe.periodS: { default: 10, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "periodSeconds defaults to 10" } }
+  livenessProbe.timeoutS: { default: 1, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "timeoutSeconds defaults to 1" } }
+  livenessProbe.failureThreshold: { default: 3, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes", note: "failureThreshold defaults to 3" } }
   hpa.cpuInitializationS: { default: 300, unit: s, description: "A pod this young that is not Ready has no usable CPU metric", source: { kind: vendor-docs, url: "https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/", note: "--horizontal-pod-autoscaler-cpu-initialization-period defaults to 5m0s" } }
   podStartupS: { default: 20, unit: s, description: "Scheduled to Ready: image pull (cached), container start, readiness probe", source: { kind: default-estimate } }
   hpa.syncPeriodS: { default: 15, unit: s, source: { kind: vendor-docs, url: "https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/", note: "--horizontal-pod-autoscaler-sync-period defaults to 15s" } }

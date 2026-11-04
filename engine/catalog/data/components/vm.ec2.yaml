@@ -2,7 +2,7 @@ id: vm.ec2
 archetype: runtime_host
 displayName: AWS EC2 (Auto Scaling Group)
 params:
-  instanceType: { default: c6i.large, optionsFrom: instances, source: { kind: default-estimate } }
+  instanceType: { default: c7i.large, optionsFrom: instances, source: { kind: default-estimate } }
   count: { default: 2, description: "Instances when no autoscaling block is configured", source: { kind: default-estimate } }
   autoscaling.min: { default: 1, source: { kind: default-estimate } }
   autoscaling.max: { default: 10, source: { kind: default-estimate } }

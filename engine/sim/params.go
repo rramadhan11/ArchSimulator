@@ -303,6 +303,9 @@ func parseMemory(v any) (float64, error) {
 		return f, nil
 	}
 	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil // not set, as in Kubernetes
+	}
 	scale := 1.0
 	for _, m := range memSuffixes {
 		if strings.HasSuffix(s, m.suffix) {

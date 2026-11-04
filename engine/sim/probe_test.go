@@ -99,3 +99,42 @@ func slicesRepeat(v float64, n int) []float64 {
 	}
 	return out
 }
+
+// Failures at t=13-15 restart the container at t=15: back-off 10 s plus the
+// 20 s pod startup, so it is ready at t=45. Requests arriving meanwhile find
+// no pod and fail. From t=45 the backlog builds again (the old one died with
+// the container), the probe fails at t=48-50 and the back-off doubles.
+func TestLivenessProbeRestartsWithBackoff(t *testing.T) {
+	out := mustSimulate(t, probeDoc(`, "livenessProbe": {"kind": "http", "periodS": 1}`), probeTimeline())
+	for _, want := range []struct {
+		t   float64
+		msg string
+	}{
+		{15, "liveness probe failed 3× (backlog wait 1.72s > 1s timeout): 1 container(s) restart in 30s"},
+		{50, "liveness probe failed 3× (backlog wait 1.72s > 1s timeout): 1 container(s) restart in 40s"},
+	} {
+		if !hasEvent(out, want.t, "deploy", want.msg) {
+			t.Errorf("missing %q at t=%v in %v", want.msg, want.t, out.Events)
+		}
+	}
+	for i := 16; i < 45; i++ {
+		if tk := out.Ticks[i]; tk.Replicas[0].Ready != 0 || tk.ErrorRate != 1 {
+			t.Fatalf("t=%d: %+v, want no ready pod and every request failing", i, tk)
+		}
+	}
+	if r := out.Ticks[45].Replicas[0].Ready; r != 1 {
+		t.Errorf("t=45: ready = %d, want 1", r)
+	}
+}
+
+// Through kube-proxy, clients on open keep-alive connections keep sending to
+// a not-Ready pod: the probe fails, but traffic is not cut off.
+func TestReadinessKeepaliveKeepsTraffic(t *testing.T) {
+	out := mustSimulate(t, probeDoc(`, "readinessProbe": {"kind": "http", "periodS": 1, "notReadyTraffic": "keepalive"}`), probeTimeline())
+	if !hasEvent(out, 15, "deploy", "readiness probe failed 3× (backlog wait 1.72s > 1s timeout): pods leave the Service, but open keep-alive connections keep sending to them") {
+		t.Fatalf("missing the keep-alive probe failure at t=15: %v", out.Events)
+	}
+	if tk := out.Ticks[16]; tk.ErrorRate == 1 || tk.Stations[0].Backlog <= out.Ticks[15].Stations[0].Backlog {
+		t.Errorf("t=16: %+v, want traffic still served and the backlog still growing", tk)
+	}
+}

@@ -77,6 +77,7 @@ func (g *graph) evaluate(tps float64, samples int, seed uint64) *Report {
 	for _, e := range g.edges {
 		r.Edges = append(r.Edges, EdgeReport{Edge: e.id, CallsPerS: edgeRate[e.idx]})
 	}
+	r.Cost = g.cost()
 	r.Assumptions = g.params.list()
 	g.judge(r)
 	r.Confidence = g.confidence(r)
@@ -231,6 +232,16 @@ func (g *graph) resources(nodeRate, edgeRate []float64, mc *mcResult) []Resource
 				Note:     "waiting for a free slot is not added to latency"},
 				nodeRate[h.svc.idx]*mc.meanResidence(h.svc.idx)/1000, float64(h.scheduled*h.maxConc))
 		}
+		for _, h := range g.hosts {
+			if h.mem == nil || h.scheduled == 0 {
+				continue
+			}
+			inFlight := nodeRate[h.svc.idx] * mc.meanResidence(h.svc.idx) / 1000 / float64(h.scheduled)
+			add(ResourceReport{ID: h.svc.m.ID + "/memory", Node: h.svc.m.ID, Kind: "memory", Unit: "MiB per pod", hard: true,
+				critical: []string{g.key(h.svc, "memory.baseMiB"), g.key(h.svc, "memory.perRequestKiB")},
+				Note:     fmt.Sprintf("estimate: baseline + %.1f in-flight requests per pod; above the limit the pod is OOMKilled", inFlight)},
+				h.mem.mib(inFlight), h.mem.limitMiB)
+		}
 		for _, p := range g.connPools {
 			inUse := 0.0
 			for _, e := range p.edges {
@@ -298,12 +309,19 @@ func (g *graph) judge(r *Report) {
 			block("resource:" + res.ID)
 			continue
 		}
+		overload, warn := t.Overload, t.Warn
+		if res.hard {
+			overload, warn = 1, t.Overload
+		}
 		switch u := *res.Utilization; {
-		case u >= t.Overload:
-			raise(VerdictOverload, "%s at %.0f%% utilization (overload threshold %.0f%%)", res.ID, u*100, t.Overload*100)
+		case res.hard && u >= overload:
+			raise(VerdictOverload, "%s at %.0f%% of its limit: the pods are OOMKilled", res.ID, u*100)
 			block("resource:" + res.ID)
-		case u >= t.Warn && !res.ScalingHeadroom:
-			raise(VerdictWarning, "%s at %.0f%% utilization (warning threshold %.0f%%)", res.ID, u*100, t.Warn*100)
+		case u >= overload:
+			raise(VerdictOverload, "%s at %.0f%% utilization (overload threshold %.0f%%)", res.ID, u*100, overload*100)
+			block("resource:" + res.ID)
+		case u >= warn && !res.ScalingHeadroom:
+			raise(VerdictWarning, "%s at %.0f%% utilization (warning threshold %.0f%%)", res.ID, u*100, warn*100)
 		}
 	}
 	if !r.Stable {

@@ -95,6 +95,16 @@ func simulateCFS(lambda, meanMs, cs2 float64, m *cfsModel, seed uint64) []float6
 		}
 	}
 	for len(waits) < cfsJobs {
+		if len(running) == 0 && len(queue) == 0 {
+			// Idle until the next arrival: jump there and count time from it.
+			// Skipping the empty periods at once keeps low loads fast, and
+			// the rebase keeps t small, where t+left still moves time on.
+			if arrival >= period { // new period(s), with a full quota
+				period += (math.Floor((arrival-period)/m.periodMs) + 1) * m.periodMs
+				quota = m.quotaMs
+			}
+			t, period, arrival = 0, period-arrival, 0
+		}
 		next := math.Min(arrival, period)
 		if quota > 0 {
 			for _, j := range running {

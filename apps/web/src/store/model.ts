@@ -2,7 +2,7 @@
 // editor's React Flow graph. The flow graph is the editing source of truth;
 // toArchitecture() produces what the engine (and export/share) consume.
 import type { Edge, Node } from '@xyflow/react'
-import type { Archetype, Architecture, Catalog, Config, ModelEdge, ModelNode, Workload } from '../engine/types'
+import type { Archetype, Architecture, Catalog, Config, ModelEdge, ModelNode, Pricing, Workload } from '../engine/types'
 
 export type NodeData = { kind: string; name?: string; config: Config }
 export type EdgeData = Omit<ModelEdge, 'id' | 'from' | 'to'>
@@ -82,7 +82,7 @@ export function sortParentsFirst(nodes: FlowNode[]): FlowNode[] {
     .map((x) => x.n)
 }
 
-export function fromArchitecture(a: Architecture, cat: Catalog): { nodes: FlowNode[]; edges: FlowEdge[]; workload: Workload } {
+export function fromArchitecture(a: Architecture, cat: Catalog): { nodes: FlowNode[]; edges: FlowEdge[]; workload: Workload; pricing?: Pricing } {
   const ui = a.ui ?? {}
   let nodes: FlowNode[] = a.nodes.map((m) => {
     const container = isContainer(archetypeOf(cat, m.kind))
@@ -106,10 +106,10 @@ export function fromArchitecture(a: Architecture, cat: Catalog): { nodes: FlowNo
     taken.add(eid)
     return { id: eid, source: from, target: to, data }
   })
-  return { nodes, edges, workload: a.workload }
+  return { nodes, edges, workload: a.workload, pricing: a.pricing }
 }
 
-export function toArchitecture(nodes: FlowNode[], edges: FlowEdge[], workload: Workload, catalogVersion: string): Architecture {
+export function toArchitecture(nodes: FlowNode[], edges: FlowEdge[], workload: Workload, catalogVersion: string, pricing?: Pricing): Architecture {
   const modelNodes: ModelNode[] = nodes.map((n) => ({
     id: n.id,
     kind: n.data.kind,
@@ -134,6 +134,7 @@ export function toArchitecture(nodes: FlowNode[], edges: FlowEdge[], workload: W
     nodes: modelNodes,
     edges: modelEdges,
     workload,
+    ...(pricing?.hourlyUSD && Object.keys(pricing.hourlyUSD).length ? { pricing } : {}),
     ui: { positions, sizes },
   }
 }

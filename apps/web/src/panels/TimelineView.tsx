@@ -3,6 +3,7 @@ import type { LoadPattern, Timeline } from '../engine/types'
 import { latest, useDesign } from '../store/design'
 import { Chart, themeColors, type ChartOption } from '../ui/Chart'
 import { cx, fmt, fmtMs } from '../ui/kit'
+import { usd } from './Cost'
 import { EngineErrorView } from './QuickCheck'
 
 const MAX_STATION_SERIES = 6
@@ -62,11 +63,19 @@ function TimelineResult({ tl, base, baseName, sloP99, running }: { tl: Timeline;
   const p99 = (x: number | null) => (x === null ? '–' : fmtMs(x))
   return (
     <div className={cx('space-y-4 transition-opacity', running && 'opacity-60')}>
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div className={cx('grid grid-cols-2 gap-2', s.costUSD === undefined ? 'lg:grid-cols-4' : 'lg:grid-cols-5')}>
         <Tile label="Peak p99" value={p99(s.peakP99Ms)} was={b && p99(b.peakP99Ms)} tone={sloP99 && s.peakP99Ms !== null && s.peakP99Ms > sloP99 ? 'bad' : undefined} />
         <Tile label="Max error rate" value={`${fmt(s.maxErrorRate * 100, 2)}%`} was={b && `${fmt(b.maxErrorRate * 100, 2)}%`} tone={s.maxErrorRate > 0 ? 'bad' : undefined} />
         <Tile label="SLO broken" value={s.sloBreachS ? `${fmt(s.sloBreachS)} s` : 'never'} was={b && (b.sloBreachS ? `${fmt(b.sloBreachS)} s` : 'never')} tone={s.sloBreachS ? 'bad' : 'ok'} />
         <Tile label="First breach" value={s.firstBreachS === null ? '–' : `t = ${fmt(s.firstBreachS)} s`} was={b && (b.firstBreachS === null ? '–' : `t = ${fmt(b.firstBreachS)} s`)} />
+        {s.costUSD !== undefined && (
+          <Tile
+            label={`Cost of these ${fmt(tl.ticks.length * tl.tickS / 60)} min`}
+            value={usd(s.costUSD, 2)}
+            was={b?.costUSD === undefined ? undefined : usd(b.costUSD, 2)}
+            note={s.costUnpriced?.length ? `without ${s.costUnpriced.join(', ')} (no rate)` : 'nodes and VMs as they scale'}
+          />
+        )}
       </div>
       {base && <p className="text-[11px] text-muted">Grey dashed lines and “was” values: baseline “{baseName}”.</p>}
       <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
@@ -122,12 +131,13 @@ function TimelineResult({ tl, base, baseName, sloP99, running }: { tl: Timeline;
   )
 }
 
-function Tile({ label, value, was, tone }: { label: string; value: string; was?: string; tone?: 'ok' | 'bad' }) {
+function Tile({ label, value, was, tone, note }: { label: string; value: string; was?: string; tone?: 'ok' | 'bad'; note?: string }) {
   return (
-    <div className="rounded-lg border border-line bg-panel px-3 py-2">
-      <div className="text-[10.5px] font-medium tracking-wide text-muted uppercase">{label}</div>
+    <div className="min-w-0 rounded-lg border border-line bg-panel px-3 py-2">
+      <div className="truncate text-[10.5px] font-medium tracking-wide text-muted uppercase">{label}</div>
       <div className={cx('num text-[16px] font-semibold', tone === 'ok' && 'text-ok', tone === 'bad' && 'text-bad')}>{value}</div>
       {was !== undefined && <div className="num text-[11px] text-muted">was {was}</div>}
+      {note && <div className="truncate text-[11px] text-muted" title={note}>{note}</div>}
     </div>
   )
 }

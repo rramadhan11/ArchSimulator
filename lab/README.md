@@ -6,8 +6,9 @@ service runs in a local Kubernetes cluster ([kind](https://kind.sigs.k8s.io/)),
 [k6](https://k6.io/) sends it a traffic spike, and the result is compared second
 by second with ArchSim's simulation of the same design.
 
-**Run on 2026-11-02** on a 2 vCPU / 8 GB VPS (Ubuntu 24.04, kind v0.24.0,
-Kubernetes v1.31). Results are under [Results](#results-2026-11-02).
+**Run on 2026-11-02 and 2026-11-04** on a 2 vCPU / 8 GB VPS (Ubuntu 24.04,
+kind v0.24.0, Kubernetes v1.31). Results are under
+[Results](#results-2026-11-02).
 
 ## What runs
 
@@ -16,8 +17,9 @@ Kubernetes v1.31). Results are under [Results](#results-2026-11-02).
 | Reference service: every request burns exactly 4 ms of CPU (measured as thread CPU time, so CPU throttling does not change the cost) | `cmd/work`, `Dockerfile` | 1–4 pods × 0.25 CPU, 64 MiB |
 | Deployment + HPA (min 1, max 4, target 70%, default scaling behavior) and a NodePort Service | `k8s/app.yaml` | |
 | One-node kind cluster + metrics-server | `k8s/kind.yaml` | ~1–1.5 GiB |
-| Load: 30 req/s → spike to 120 req/s at t=60 s (30 s ramp, 240 s hold) → back to 30, 2 s client timeout | `k6/spike.js` | ≤ 300 virtual users |
-| The same system in ArchSim | `design.json` | |
+| Load: 30 req/s → spike to 120 req/s (`small`: 90) at t=60 s (30 s ramp, 240 s hold) → back to 30, 2 s client timeout | `k6/spike.js` | ≤ 300 virtual users |
+| CPU per request: 60 s at 30 req/s | `k6/steady.js` | |
+| The same system in ArchSim | `design.json`, `design-small.json` | |
 | Comparison of the two | `cmd/analyze` | |
 
 Everything runs inside Docker, so Docker's CPU and memory limit caps the lab.
@@ -36,13 +38,16 @@ pinned versions (`go run sigs.k8s.io/kind@v0.24.0`, image `grafana/k6:0.54.0`).
 
 ```sh
 make lab          # = lab/run.sh: asks before starting, writes lab/results/
+lab/run.sh small  # spike to 90 req/s, at most 3 pods (design-small.json): fits 2 CPU
 make lab-clean    # deletes the kind cluster
 ```
 
-The report (`lab/results/report.txt`) shows, per 10 s: request rate, p99,
-error rate and ready/desired pods, real next to simulated, then milestones:
-first scale-up decision, peak pods, peak p99, when p99 is back under the SLO,
-and total errors. ArchSim's prediction for this design:
+Each run first measures the CPU a request costs (60 s at 30 req/s, the pod's
+cgroup `cpu.stat`; `results/cpu.txt`). The report (`lab/results/report.txt`)
+compares the run twice, with the design's `cpuMsPerReq` and with the measured
+one. Each comparison shows, per 10 s: request rate, p99, error rate and
+ready/desired pods, real next to simulated, then milestones: first scale-up
+decision, peak pods, peak p99, when p99 is back under the SLO, and total errors. ArchSim's prediction for this design:
 
 - HPA scales 1 → 2 at t=75 s and 2 → 3 at t=90 s
 - backlog from t=71 s to t=86 s; p99 hits the 2 s timeout, errors during the ramp
@@ -66,7 +71,9 @@ and total errors. ArchSim's prediction for this design:
     the pod was not Ready. The simulation starts from a long-running steady
     state.
   - kube-proxy keeps sending keep-alive traffic to a not-Ready pod, so the pod
-    stayed saturated. ArchSim stops all traffic, as an L7 proxy does.
+    stayed saturated. ArchSim stops all traffic by default, as an L7 proxy
+    does. With `readinessProbe.notReadyTraffic: keepalive` the simulation gives
+    43% errors (real 71%); the rest is the young pod's missing metric.
 
 **Run 2: TCP readiness probe** (answered by the kernel, as `k8s/app.yaml` now has):
 
@@ -115,11 +122,11 @@ pins these timings.
   | 48% (30 req/s, 1 pod) | 4.4 / 8.3 ms | 16 / 75 ms |
   | 64% (120 req/s, 3 pods) | 31 / 134 ms | 16 / 43 ms |
 
-- The HPA asked for a 4th pod at t=193 s, most likely because the pods were
-  still at full CPU draining the backlog (p50 was still ~300 ms then). An
-  earlier version of this README guessed extra CPU per request instead; the
-  timing points to the backlog. The 4th pod stayed Pending: Kubernetes' own pods
-  requested 1.05 CPU, so the 2-CPU node had room for 3 service pods.
+- The HPA asked for a 4th pod at t=193 s. Two things add up there: the pods
+  were still draining the backlog at full CPU (p50 ~300 ms), and run 3 measured
+  4.61 ms of CPU per request, not 4 (so 120 req/s on 3 pods is 74% of the
+  request, not 64%). The 4th pod stayed Pending: Kubernetes' own pods requested
+  1.05 CPU, so the 2-CPU node had room for 3 service pods.
 - k6 dropped ~190 iterations (out of virtual users) at the peak, so the real
   offered load was slightly below the simulated one.
 
@@ -142,11 +149,29 @@ pins these timings.
   machine, the pods also waited for CPU behind the Kubernetes control plane and
   k6. Validating it needs a machine with spare CPU.
 
+**Run 3 (2026-11-04): `lab/run.sh small`.** Spike to 90 req/s, at most 3 pods
+(fits the 2-CPU node), TCP probe. Before the spike, 60 s at 30 req/s measured
+the CPU a request really costs, from the pod's cgroup: **4.61 ms** for the
+4 ms of work (HTTP handling and the Go runtime add 15%).
+
+| | real | ArchSim, 4 ms | ArchSim, 4.61 ms measured |
+|---|---|---|---|
+| 1 → 2 decision | t=102 s | t=105 s | t=90 s |
+| 3 pods ready | t=133 s | t=156 s | t=141 s |
+| p99 back under the SLO | t=124 s | t=132 s | t=123 s |
+| errors over the run | 5.3% | 11.0% | 8.4% |
+| p99 at 90 req/s on 3 pods (55% of the limit) | 22–50 ms, spikes to ~100 | | 50–60 ms |
+
+With the measured cost the simulation follows the run closely, slightly
+pessimistic on errors. At 55% of the limit the CFS throttling tail is in the
+right range, the first partial check of it. (On one pod at 30 req/s the
+simulation is still pessimistic because of k6's evenly spaced arrivals, see
+above.)
+
 Next calibration steps:
-1. Validate CFS throttling near the limit on a machine with spare CPU (≥ 4).
-2. Measure CPU per request (and set `cpuMsPerReq` from it).
-3. A smaller spike that peaks at 3 pods fits this 2 vCPU VPS; the full run needs
-   a machine with ≥ 4 CPU.
+1. Validate CFS throttling closer to the limit on a machine with spare CPU
+   (≥ 4); this VPS adds host CPU contention there.
+2. The full-size run (`lab/run.sh`) needs a machine with ≥ 4 CPU.
 
 ## What to look for
 

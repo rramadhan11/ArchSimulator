@@ -5,11 +5,17 @@ instances:
   c6i.xlarge:     { vcpu: 4,  memoryGiB: 8 }
   c6i.2xlarge:    { vcpu: 8,  memoryGiB: 16 }
   c6i.4xlarge:    { vcpu: 16, memoryGiB: 32 }
+  c7i.large:      { vcpu: 2,  memoryGiB: 4 }
+  c7i.xlarge:     { vcpu: 4,  memoryGiB: 8 }
+  c7i.2xlarge:    { vcpu: 8,  memoryGiB: 16 }
+  c7i.4xlarge:    { vcpu: 16, memoryGiB: 32 }
   m6i.large:      { vcpu: 2,  memoryGiB: 8 }
   m6i.xlarge:     { vcpu: 4,  memoryGiB: 16 }
   m6i.2xlarge:    { vcpu: 8,  memoryGiB: 32 }
   r6i.large:      { vcpu: 2,  memoryGiB: 16 }
   r6i.xlarge:     { vcpu: 4,  memoryGiB: 32 }
+  r7i.large:      { vcpu: 2,  memoryGiB: 16 }
+  r7i.xlarge:     { vcpu: 4,  memoryGiB: 32 }
   db.m6g.large:   { vcpu: 2,  memoryGiB: 8 }
   db.m6g.xlarge:  { vcpu: 4,  memoryGiB: 16 }
   db.r6g.large:   { vcpu: 2,  memoryGiB: 16 }
@@ -24,3 +30,33 @@ instances:
   generic-2c4g:   { vcpu: 2,  memoryGiB: 4 }
   generic-4c8g:   { vcpu: 4,  memoryGiB: 8 }
   generic-8c16g:  { vcpu: 8,  memoryGiB: 16 }
+
+# On-demand price of one instance, USD per hour. A design can set its own
+# rates (pricing.hourlyUSD); the keys are the instance type, plus the engine
+# for managed databases. Not every type has a price here: AWS does not offer
+# c6i/r6i in Jakarta, Google has no price list readable without an API key,
+# and generic shapes have no vendor.
+pricesSource:
+  kind: vendor-docs
+  url: "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-southeast-3/index.csv"
+  note: "AWS Price List for ap-southeast-3 (Jakarta), published 2026-11-03: EC2 Linux shared tenancy, RDS Single-AZ (AmazonRDS offer file)"
+hourlyUSD:
+  c7i.large: 0.1029
+  c7i.xlarge: 0.2058
+  c7i.2xlarge: 0.4116
+  c7i.4xlarge: 0.8232
+  m6i.large: 0.12
+  m6i.xlarge: 0.24
+  m6i.2xlarge: 0.48
+  r7i.large: 0.1596
+  r7i.xlarge: 0.3192
+  db.m6g.large/postgres: 0.221
+  db.m6g.xlarge/postgres: 0.441
+  db.r6g.large/postgres: 0.27
+  db.r6g.xlarge/postgres: 0.54
+  db.r6g.2xlarge/postgres: 1.079
+  db.m6g.large/mysql: 0.209
+  db.m6g.xlarge/mysql: 0.418
+  db.r6g.large/mysql: 0.255
+  db.r6g.xlarge/mysql: 0.51
+  db.r6g.2xlarge/mysql: 1.02

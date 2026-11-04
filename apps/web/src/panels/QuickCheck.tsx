@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Assumption, Issue, Result } from '../engine/types'
 import { latest, useDesign } from '../store/design'
 import { cx, fmt, fmtMs, SourceBadge, UtilBar, verdictStyle } from '../ui/kit'
+import { CostView } from './Cost'
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'ok' | 'warn' | 'bad' }) {
   return (
@@ -197,6 +198,8 @@ export function QuickCheck() {
           </div>
         </div>
       ) : null}
+
+      {r.cost && <CostView cost={r.cost} />}
 
       {r.issues?.length ? (
         <div>

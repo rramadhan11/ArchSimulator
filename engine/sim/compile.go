@@ -37,7 +37,8 @@ type graph struct {
 
 	live *live // time simulation only: faults, breakers, retries this tick
 
-	cfsCache map[cfsKey][]float64 // CFS wait samples per station and load level
+	cfsCache  map[cfsKey][]float64 // CFS wait samples per station and load level
+	billables []billable           // components billed per instance hour
 }
 
 // connPool is the client-side connection pool a service keeps to one callee.
@@ -181,19 +182,32 @@ type hosting struct {
 	reqMem       float64 // bytes, for scheduling
 	maxConc      int     // in-flight requests per replica, 0 = unlimited
 	partitionCap int     // consumer parallelism limit from queue partitions, 0 = none
-	probe        *probe  // HTTP readiness probe (time simulation only)
+	readiness    *probe  // HTTP probes (time simulation only)
+	liveness     *probe
+	mem          *memModel // set when the Deployment has a memory limit
 
 	// per evaluation
 	desired, scheduled, pending int
 	scaleCapped                 bool // autoscaler wanted more than max
 }
 
-// probe is a Kubernetes HTTP readiness probe. Its request queues behind the
-// pod's backlog, so it fails when that wait exceeds the timeout.
+// memModel estimates a replica's memory: an idle baseline plus what each
+// request holds while it is queued or in flight. Above the limit the kernel
+// kills the container (OOMKilled).
+type memModel struct {
+	limitMiB, baseMiB, perRequestMiB float64
+}
+
+// mib is a replica's estimated memory with inFlight requests.
+func (m *memModel) mib(inFlight float64) float64 { return m.baseMiB + inFlight*m.perRequestMiB }
+
+// probe is a Kubernetes HTTP readiness or liveness probe. Its request queues
+// behind the pod's backlog, so it fails when that wait exceeds the timeout.
 type probe struct {
 	periodS             int
 	timeoutMs           float64
-	failures, successes int // consecutive results that flip Ready
+	failures, successes int  // consecutive results that change the state
+	keepalive           bool // readiness: not-Ready pods still get traffic on open connections
 }
 
 type autoscale struct {
@@ -270,6 +284,7 @@ func compile(a *model.Architecture, cat *catalog.Catalog) (*graph, error) {
 	g.resolveEdgeProbabilities()
 	g.applyPartitionCaps()
 	g.groupConnPools()
+	g.collectBillables()
 	if g.err != nil {
 		return nil, g.err
 	}
@@ -600,6 +615,14 @@ func (g *graph) buildCompute(n *gnode) {
 		h.reqCPU = g.cpuCores(p, "requests.cpu")
 		h.reqMem = g.memBytes(p, "requests.memory")
 		limit = g.cpuCores(p, "limits.cpu")
+		if memLimit := g.memBytes(p, "limits.memory"); memLimit > 0 {
+			if memLimit < h.reqMem {
+				g.fail(fmt.Errorf("deployment %q: limits.memory (%v) is below requests.memory (%v)", p.m.ID, memLimit, h.reqMem))
+				return
+			}
+			h.mem = &memModel{limitMiB: memLimit / (1 << 20), baseMiB: g.nonNeg(n, "memory.baseMiB"),
+				perRequestMiB: g.nonNeg(n, "memory.perRequestKiB") / 1024}
+		}
 		if !(h.reqCPU > 0) {
 			g.fail(fmt.Errorf("deployment %q: requests.cpu must be > 0", p.m.ID))
 			return
@@ -615,19 +638,20 @@ func (g *graph) buildCompute(n *gnode) {
 			g.issues = append(g.issues, Issue{Severity: SeverityInfo, Ref: p.m.ID,
 				Message: "no CPU limit: capacity assumes each pod uses exactly its CPU request (bursting above it is not counted)"})
 		}
-		switch kind := g.str(p, "readinessProbe.kind"); kind {
-		case "none", "tcp":
-		case "http":
-			h.probe = &probe{
-				periodS:   g.count(p, "readinessProbe.periodS", 1),
-				timeoutMs: 1000 * g.positive(p, "readinessProbe.timeoutS"),
-				failures:  g.count(p, "readinessProbe.failureThreshold", 1),
-				successes: g.count(p, "readinessProbe.successThreshold", 1),
+		h.readiness = g.httpProbe(p, "readinessProbe", "under a backlog it can take pods out of the Service")
+		if h.readiness != nil {
+			h.readiness.successes = g.count(p, "readinessProbe.successThreshold", 1)
+			switch traffic := g.str(p, "readinessProbe.notReadyTraffic"); traffic {
+			case "stop":
+			case "keepalive":
+				h.readiness.keepalive = true
+			default:
+				g.fail(fmt.Errorf("deployment %q: readinessProbe.notReadyTraffic must be stop or keepalive, got %q", p.m.ID, traffic))
 			}
-			g.issues = append(g.issues, Issue{Severity: SeverityInfo, Ref: p.m.ID,
-				Message: "the HTTP readiness probe acts only in the time simulation: under a backlog it can take pods out of the Service"})
-		default:
-			g.fail(fmt.Errorf("deployment %q: readinessProbe.kind must be none, http or tcp, got %q", p.m.ID, kind))
+		}
+		h.liveness = g.httpProbe(p, "livenessProbe", "under a backlog it can restart the containers")
+		if h.liveness != nil {
+			h.liveness.successes = 1 // Kubernetes requires 1 for liveness
 		}
 		if g.has(p, "hpa") {
 			h.auto = &autoscale{kind: "hpa", min: g.count(p, "hpa.min", 1), max: g.count(p, "hpa.max", 1),
@@ -678,6 +702,27 @@ func (g *graph) buildCompute(n *gnode) {
 		n.st.cfs = &cfsModel{threads: h.k, burst: h.uslFactor, quotaMs: limit * period, periodMs: period}
 	}
 	g.hosts = append(g.hosts, h)
+}
+
+// httpProbe reads a readiness or liveness probe of a Deployment; nil unless
+// it is an HTTP probe (a TCP probe is answered by the kernel and does not
+// fail from load).
+func (g *graph) httpProbe(p *gnode, key, effect string) *probe {
+	switch kind := g.str(p, key+".kind"); kind {
+	case "none", "tcp":
+		return nil
+	case "http":
+		g.issues = append(g.issues, Issue{Severity: SeverityInfo, Ref: p.m.ID,
+			Message: fmt.Sprintf("the HTTP %s acts only in the time simulation: %s", key, effect)})
+		return &probe{
+			periodS:   g.count(p, key+".periodS", 1),
+			timeoutMs: 1000 * g.positive(p, key+".timeoutS"),
+			failures:  g.count(p, key+".failureThreshold", 1),
+		}
+	default:
+		g.fail(fmt.Errorf("deployment %q: %s.kind must be none, http or tcp, got %q", p.m.ID, key, kind))
+		return nil
+	}
 }
 
 // GKE allocatable formula (also a reasonable proxy for EKS/AKS).

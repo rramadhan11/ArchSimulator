@@ -109,13 +109,17 @@ type Profile struct {
 }
 
 type Catalog struct {
-	Version         string                  `json:"version"`
-	Components      map[string]*Component   `json:"components"`
-	Instances       map[string]Instance     `json:"instances"`
-	InstancesSource Source                  `json:"instancesSource"`
-	NetworkClasses  map[string]NetworkClass `json:"networkClasses"`
-	Protocols       map[string]Protocol     `json:"protocols"`
-	Profiles        map[string]Profile      `json:"profiles"`
+	Version         string                `json:"version"`
+	Components      map[string]*Component `json:"components"`
+	Instances       map[string]Instance   `json:"instances"`
+	InstancesSource Source                `json:"instancesSource"`
+	// HourlyUSD is the on-demand price per instance hour, keyed by instance
+	// type ("<type>/<engine>" for managed databases); see instances.yaml.
+	HourlyUSD      map[string]float64      `json:"hourlyUSD"`
+	PricesSource   Source                  `json:"pricesSource"`
+	NetworkClasses map[string]NetworkClass `json:"networkClasses"`
+	Protocols      map[string]Protocol     `json:"protocols"`
+	Profiles       map[string]Profile      `json:"profiles"`
 }
 
 type sharedFile struct {
@@ -126,8 +130,10 @@ type sharedFile struct {
 }
 
 type instancesFile struct {
-	Source    Source              `yaml:"source"`
-	Instances map[string]Instance `yaml:"instances"`
+	Source       Source              `yaml:"source"`
+	Instances    map[string]Instance `yaml:"instances"`
+	PricesSource Source              `yaml:"pricesSource"`
+	HourlyUSD    map[string]float64  `yaml:"hourlyUSD"`
 }
 
 // Load returns the embedded catalog. It is parsed once and must be treated as
@@ -148,6 +154,8 @@ func load(fsys fs.FS) (*Catalog, error) {
 		Components:      map[string]*Component{},
 		Instances:       inst.Instances,
 		InstancesSource: inst.Source,
+		HourlyUSD:       inst.HourlyUSD,
+		PricesSource:    inst.PricesSource,
 		NetworkClasses:  shared.NetworkClasses,
 		Protocols:       shared.Protocols,
 		Profiles:        shared.Profiles,
@@ -202,6 +210,15 @@ func (c *Catalog) validate() error {
 	for name, in := range c.Instances {
 		if !(in.VCPU > 0) || !(in.MemoryGiB > 0) {
 			add("instance %q: vcpu and memoryGiB must be > 0", name)
+		}
+	}
+	checkSource("prices", c.PricesSource)
+	for key, usd := range c.HourlyUSD {
+		if _, ok := c.Instances[strings.SplitN(key, "/", 2)[0]]; !ok {
+			add("hourlyUSD %q: unknown instance type", key)
+		}
+		if !(usd > 0) {
+			add("hourlyUSD %q: must be > 0", key)
 		}
 	}
 	for name, n := range c.NetworkClasses {

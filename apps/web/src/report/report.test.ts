@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Architecture } from '../engine/types'
-import { buildReport } from './report'
+import { buildReport, costSection } from './report'
 
 const hostile = '<img src=x onerror=alert(1)>'
 
@@ -29,5 +29,20 @@ describe('report', () => {
     expect(html).toContain('2× / 50 ms / budget 10%')
     expect(html).toContain('No quick check result.')
     expect(html).toContain('Not run for this report.')
+  })
+
+  it('prices what has a rate and lists what has none', () => {
+    const html = costSection({
+      monthlyUSD: 197.1,
+      items: [
+        { node: 'pg', rate: 'db.r6g.large/postgres', count: 1, hourlyUSD: 0.27, monthlyUSD: 197.1, source: 'catalog' },
+        { node: hostile, rate: 'generic-2c4g', count: 2, hourlyUSD: null, monthlyUSD: null },
+      ],
+      unpriced: ['generic-2c4g'],
+    })
+    expect(html).toContain('$0.27/h')
+    expect(html).toContain('<b>$197</b> + generic-2c4g (no rate)')
+    expect(html).toContain('no rate set')
+    expect(html).not.toContain('<img')
   })
 })

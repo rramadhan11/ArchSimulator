@@ -26,6 +26,12 @@ Product & technical plan: [PLAN.md](PLAN.md) (section 0 lists the v1.1 decisions
   - retries (backoff, retry budget) and circuit breakers, so retry storms show up
 - **Failure injection**: lose nodes, pods or VMs, a whole zone, or a dependency (failing
   fast or hanging); add latency to a component or edge; fail a database over.
+- **Probes and memory**: HTTP readiness and liveness probes that fail under a backlog (pods
+  leave the Service or restart with back-off), and memory limits that OOMKill a pod whose
+  backlog grows too large.
+- **Cost**: on-demand monthly cost of node pools, VM groups and databases at the target load,
+  and the cost of a simulated window as autoscaling adds and removes instances. Current rates
+  are AWS Jakarta (ap-southeast-3) prices; every rate can be overridden per design.
 - **Compare**: pin a baseline (or any saved version) and see the quick check and timeline of later
   edits next to it.
 - **Saved designs with version history** on the server, a template gallery, a printable report
@@ -35,9 +41,9 @@ Product & technical plan: [PLAN.md](PLAN.md) (section 0 lists the v1.1 decisions
 - **Single-user login** in front of everything, so a public deployment is not open to
   anyone who finds the URL.
 
-Not modeled yet: memory pressure (OOM kills, eviction), callers' threads held by a hung
-dependency, retries in the quick check (the time simulation models them), and liveness
-probes (readiness probes are modeled in the time simulation). The calibration lab ([lab/](lab/README.md), run on
+Not modeled yet: node memory pressure and eviction (container memory limits and OOM kills
+are modeled), callers' threads held by a hung dependency, and retries in the quick check
+(the time simulation models them, along with readiness and liveness probes). The calibration lab ([lab/](lab/README.md), run on
 2026-11-02) now matches the HPA's scale-out within one sync period, the errors of an
 overload, and the low-load latency of a pod under a fractional CPU limit (CFS quota);
 throttling near the limit is not validated yet.

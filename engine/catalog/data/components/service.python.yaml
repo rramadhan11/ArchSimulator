@@ -19,6 +19,16 @@ params:
     default: 0
     description: "Threads that can execute CPU work concurrently per replica (0 = one per core)"
     source: { kind: default-estimate }
+  memory.baseMiB:
+    default: 80
+    unit: MiB
+    description: "Memory of an idle replica (runtime, libraries, caches); measure your container's working set"
+    source: { kind: default-estimate }
+  memory.perRequestKiB:
+    default: 128
+    unit: KiB
+    description: "Memory a request holds while in flight or queued (buffers, decoded payloads, per-request objects)"
+    source: { kind: default-estimate }
   maxConcurrencyPerReplica:
     default: 5
     description: "In-flight requests a replica accepts, including those waiting on downstream calls (0 = unlimited)"
