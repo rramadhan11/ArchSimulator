@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Canvas } from './canvas/Canvas'
 import { DesignsDialog, type DesignsTab } from './panels/DesignsDialog'
 import { Inspector } from './panels/Inspector'
+import { RatesDialog } from './panels/Cost'
 import { Methodology } from './panels/Methodology'
 import { Palette } from './panels/Palette'
 import { QuickCheck } from './panels/QuickCheck'
@@ -33,6 +34,7 @@ function TopBar() {
   const [note, setNote] = useState<string>()
   const [dialog, setDialog] = useState<DesignsTab | null>(null)
   const [method, setMethod] = useState(false)
+  const [rates, setRates] = useState(false)
   const flash = (msg: string) => {
     setNote(msg)
     setTimeout(() => setNote(undefined), 2500)
@@ -122,6 +124,10 @@ function TopBar() {
         </Button>
         <Button onClick={() => void share()}>Share link</Button>
         <BaselineControl onPinned={() => flash('Pinned as baseline: results now show this version next to your edits')} />
+        <Button variant="ghost" onClick={() => setRates(true)} title="Prices per instance hour used for the cost estimate; set your own">
+          Rates
+        </Button>
+        <RatesDialog open={rates} onClose={() => setRates(false)} />
         <Button variant="ghost" onClick={() => setMethod(true)}>
           How it works
         </Button>

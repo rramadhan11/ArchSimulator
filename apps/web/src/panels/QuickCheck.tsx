@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Assumption, Issue, Result } from '../engine/types'
 import { latest, useDesign } from '../store/design'
 import { cx, fmt, fmtMs, SourceBadge, UtilBar, verdictStyle } from '../ui/kit'
-import { CostView } from './Cost'
+import { CostView, usd } from './Cost'
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'ok' | 'warn' | 'bad' }) {
   return (
@@ -125,7 +125,7 @@ export function QuickCheck() {
         </ul>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-6">
         <Stat label="p50 / p95" value={r.latency ? `${fmtMs(r.latency.p50Ms)}` : 'unbounded'} sub={r.latency ? `p95 ${fmtMs(r.latency.p95Ms)} · mean ${fmtMs(r.latency.meanMs)}` : 'queues grow without bound'} />
         <Stat label="p99" value={r.latency ? fmtMs(r.latency.p99Ms) : 'unbounded'} sub={slo?.p99Ms ? `SLO ${fmtMs(slo.p99Ms)}` : 'no SLO set'} tone={p99Tone} />
         <Stat label="Errors" value={r.errorRate !== undefined ? `${fmt(r.errorRate * 100, 3)}%` : '–'} sub={`budget ${fmt((slo?.errorRate ?? 0.001) * 100, 3)}%`} tone={r.errorRate !== undefined && r.errorRate > (slo?.errorRate ?? 0.001) ? 'bad' : undefined} />
@@ -133,6 +133,12 @@ export function QuickCheck() {
           label="Max sustainable"
           value={result.maxSustainableTps === null ? '∞' : `${fmt(result.maxSustainableTps)} TPS`}
           sub={result.maxSustainableTps === null ? 'no finite bottleneck' : `limited by ${limitLabel(result.limitedBy)}`}
+        />
+        <Stat
+          label="Cost / month"
+          value={r.cost ? usd(r.cost.monthlyUSD) : '–'}
+          sub={!r.cost ? 'nothing billed per hour' : r.cost.unpriced?.length ? `+ ${r.cost.unpriced.length} without a rate` : 'on-demand instances'}
+          tone={r.cost?.unpriced?.length ? 'warn' : undefined}
         />
         <Stat label="Confidence" value={r.confidence.level} sub={`score ${fmt(r.confidence.score, 2)}`} tone={r.confidence.level === 'low' ? 'warn' : undefined} />
       </div>
