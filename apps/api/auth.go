@@ -260,6 +260,8 @@ var loginTmpl = template.Must(template.New("login").Parse(`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ArchSim · Sign in</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <style>
   :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#d1d5db; --accent:#2563eb; --err:#b91c1c; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0b0f17; --card:#111827; --fg:#e5e7eb; --muted:#9ca3af; --line:#374151; --accent:#60a5fa; --err:#f87171; } }
@@ -292,7 +294,7 @@ var loginTmpl = template.Must(template.New("login").Parse(`<!doctype html>
 
 func renderLogin(w http.ResponseWriter, status int, next, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if err := loginTmpl.Execute(w, struct{ Next, Error string }{safeNext(next), errMsg}); err != nil {

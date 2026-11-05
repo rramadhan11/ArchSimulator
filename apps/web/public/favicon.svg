@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The header logo (two services calling a shared one) on the accent tile. -->
+  <rect width="32" height="32" rx="7" fill="#2f6fde"/>
+  <path fill="#fff" transform="translate(4 4)" d="M4 5h6v4H4zm10 0h6v4h-6zM9 15h6v4H9zM7 9v3h10V9h-2v1H9V9zm4 3h2v3h-2z"/>
+</svg>

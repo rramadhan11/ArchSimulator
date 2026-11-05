@@ -216,3 +216,25 @@ func TestServesPrecompressedAssets(t *testing.T) {
 		t.Error("gzip;q=0 must not get gzip")
 	}
 }
+
+func TestIconsArePublic(t *testing.T) {
+	cfg := testConfig(t)
+	if err := os.WriteFile(filepath.Join(cfg.webDir, "favicon.svg"), []byte("<svg/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := mustHandler(t, cfg)
+	get := func(target string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		return rec
+	}
+	if rec := get("/favicon.svg"); rec.Code != http.StatusOK || rec.Body.String() != "<svg/>" {
+		t.Errorf("favicon without a session: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get("/apple-touch-icon.png"); rec.Code != http.StatusNotFound {
+		t.Errorf("missing icon: %d, want 404 (not the login redirect or the app)", rec.Code)
+	}
+	if rec := get("/engine.wasm"); rec.Code != http.StatusSeeOther {
+		t.Errorf("other files must still need a session, got %d", rec.Code)
+	}
+}

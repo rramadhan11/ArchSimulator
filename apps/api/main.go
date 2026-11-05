@@ -118,15 +118,22 @@ func newHandler(cfg config) (http.Handler, error) {
 	public.HandleFunc("/login", a.handleLogin)
 	public.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 
+	web := spa(os.DirFS(cfg.webDir))
+	// Icons are public so the login page and the browser tab can show them.
+	public.Handle("GET /favicon.svg", web)
+	public.Handle("GET /apple-touch-icon.png", web)
+
 	private := http.NewServeMux()
 	private.HandleFunc("/logout", a.handleLogout)
 	designRoutes(private, designs)
 	private.Handle("/api/", http.NotFoundHandler()) // unknown API routes are not SPA pages
-	private.Handle("/", spa(os.DirFS(cfg.webDir)))
+	private.Handle("/", web)
 
 	root := http.NewServeMux()
 	root.Handle("/login", public)
 	root.Handle("/healthz", public)
+	root.Handle("/favicon.svg", public)
+	root.Handle("/apple-touch-icon.png", public)
 	root.Handle("/", a.require(private))
 	return securityHeaders(root), nil
 }
