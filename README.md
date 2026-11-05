@@ -83,6 +83,25 @@ make dev         # Vite dev server with hot reload, no login (local only)
 make build       # engine.wasm, web app (dist/ + .gz copies), bin/archsim-api, bin/archsim
 ```
 
+## Engine speed
+
+The browser runs the engine as WebAssembly in a Web Worker. Median time per call on the
+bundled templates (Apple M2 Pro, 5 November 2026; native from
+`go test ./engine/sim -run '^$' -bench . -benchtime 5x`):
+
+| | Quick check | Time simulation |
+|---|---|---|
+| Native Go | 15–30 ms | 130–260 ms |
+| Chrome 157 (WASM) | 50–90 ms | 0.45–0.75 s |
+| Node 23 (WASM) | 90–130 ms | 0.7–1.1 s |
+
+The first call after loading is slower (up to ~1 s) while V8 optimizes the WASM code. In the
+app, the K8s + Kong template shows a quick check in 86 ms and a time simulation in 0.6 s
+(0.7 s from click to charts). The WASM file is 5.1 MB (1.4 MB gzip).
+
+Measure without DevTools attached: an open DevTools/CDP session (Puppeteer, `--remote-debugging-port`
+with a client) slows the page 10–100×, with charts taking seconds per render.
+
 ## Engine CLI
 
 ```sh

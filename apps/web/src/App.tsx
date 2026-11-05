@@ -1,5 +1,5 @@
 import { ReactFlowProvider } from '@xyflow/react'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from './canvas/Canvas'
 import { DesignsDialog, type DesignsTab } from './panels/DesignsDialog'
 import { Inspector } from './panels/Inspector'
@@ -7,11 +7,13 @@ import { RatesDialog } from './panels/Cost'
 import { Methodology } from './panels/Methodology'
 import { Palette } from './panels/Palette'
 import { QuickCheck } from './panels/QuickCheck'
-import { TimelineView } from './panels/TimelineView'
 import { designKey, latest, savedDesign, useDesign } from './store/design'
 import { buildReport } from './report/report'
 import { encodeShare, parseSaved } from './store/persist'
 import { Button, cx, fmt, verdictStyle } from './ui/kit'
+
+// The charts (ECharts) are most of the bundle and only the time simulation uses them.
+const TimelineView = lazy(() => import('./panels/TimelineView').then((m) => ({ default: m.TimelineView })))
 
 export function App() {
   return (
@@ -237,7 +239,17 @@ function Workspace() {
             {open ? 'Hide ▾' : 'Show ▴'}
           </button>
         </div>
-        {open && <div className="min-h-0 flex-1 overflow-y-auto">{tab === 'check' ? <QuickCheck /> : <TimelineView />}</div>}
+        {open && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {tab === 'check' ? (
+              <QuickCheck />
+            ) : (
+              <Suspense fallback={<p className="p-4 text-[12px] text-muted">Loading charts…</p>}>
+                <TimelineView />
+              </Suspense>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
