@@ -283,10 +283,23 @@ export interface Tick {
   offeredTps: number
   errorRate: number
   latency?: LatencyStats
-  replicas: { desired: number; ready: number }[]
+  replicas: ReplicaTick[]
   stations: { load: number | null; backlog: number; waitMs: number }[]
   pools?: { ready: number; provisioning: number }[]
   edges?: EdgeTick[]
+  /** Calls per second on each edge of Timeline.calls, retries included. */
+  calls: number[]
+}
+
+export interface ReplicaTick {
+  desired: number
+  /** Running and passing the readiness probe. */
+  ready: number
+  /** Running but failing the readiness probe. */
+  notReady: number
+  starting: number
+  /** No room on the node pool. */
+  pending: number
 }
 
 export interface EdgeTick {
@@ -309,9 +322,13 @@ export interface Timeline {
   catalogVersion: string
   tickS: number
   services: string[]
+  /** The Deployment or VM group each service runs on ("" for none). */
+  hosts: string[]
   stations: string[]
   pools?: string[]
   edges?: string[]
+  /** Every edge, parallel to Tick.calls. */
+  calls: string[]
   failures?: FailureSpan[]
   ticks: Tick[]
   events: { t: number; ref: string; message: string }[] | null

@@ -23,6 +23,7 @@ import {
   type FlowNode,
   type NodeData,
 } from './model'
+import { usePlayback } from './playback'
 import { saveBaseline, saveLocal, saveServerLink, type SavedDesign, type ServerLink } from './persist'
 import { server } from './server'
 
@@ -59,6 +60,8 @@ interface DesignState {
   selection: Selection
   check: Status<Result>
   timeline: Status<Timeline>
+  /** The design changed (as the engine sees it) since the time simulation started. */
+  timelineStale: boolean
   baseline: Baseline | null
   /** The server design this draft continues; null for an unsaved design. */
   server: ServerLink | null
@@ -104,12 +107,14 @@ export const useDesign = create<DesignState>()((set, get) => ({
   selection: null,
   check: { state: 'idle' },
   timeline: { state: 'idle' },
+  timelineStale: false,
   baseline: null,
   server: null,
 
   load(d, link) {
     const { nodes, edges, workload, pricing } = fromArchitecture(d.architecture, get().catalog)
-    set({ name: d.name, nodes, edges, workload, pricing, selection: null, check: { state: 'idle' }, timeline: { state: 'idle' } })
+    set({ name: d.name, nodes, edges, workload, pricing, selection: null, check: { state: 'idle' }, timeline: { state: 'idle' }, timelineStale: false })
+    usePlayback.getState().stop()
     setServerLink(link ? { ...link, savedKey: designKey() } : null)
   },
 
@@ -288,7 +293,8 @@ export const useDesign = create<DesignState>()((set, get) => ({
 
   async runTimeline() {
     const last = latest(get().timeline)
-    set({ timeline: { state: 'running', last } })
+    set({ timeline: { state: 'running', last }, timelineStale: false })
+    usePlayback.getState().stop()
     try {
       const { value, ms } = await engine.simulate(engineView(get().architecture()))
       set({ timeline: { state: 'done', value, ms } })
@@ -391,6 +397,9 @@ export function startAutoEffects() {
     const key = JSON.stringify(engineView(s.architecture()))
     if (key === lastEngineKey) return
     lastEngineKey = key
+    // The timeline no longer describes the design: stop playing it on the canvas.
+    if (s.timeline.state !== 'idle') useDesign.setState({ timelineStale: true })
+    usePlayback.getState().stop()
     clearTimeout(checkTimer)
     checkTimer = setTimeout(() => void useDesign.getState().runCheck(), 400)
   })

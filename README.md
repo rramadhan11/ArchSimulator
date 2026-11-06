@@ -24,6 +24,9 @@ Product & technical plan: [PLAN.md](PLAN.md) (section 0 lists the v1.1 decisions
   - pod startup, Pending pods, node provisioning and cluster-autoscaler scale-down
   - backlogs and timeouts when demand exceeds capacity
   - retries (backoff, retry budget) and circuit breakers, so retry storms show up
+- **Playback**: plays the time simulation back on the canvas (play, pause, a time slider, 10 s
+  to real time): node load, calls per edge, pods on each Deployment or VM group (ready,
+  starting, Pending, failing readiness) and nodes on each node pool, second by second.
 - **Failure injection**: lose nodes, pods or VMs, a whole zone, or a dependency (failing
   fast or hanging); add latency to a component or edge; fail a database over.
 - **Probes and memory**: HTTP readiness and liveness probes that fail under a backlog (pods

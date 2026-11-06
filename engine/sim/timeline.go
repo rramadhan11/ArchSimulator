@@ -47,7 +47,12 @@ type Timeline struct {
 	Stations       []string `json:"stations"`
 	Pools          []string `json:"pools,omitempty"`
 	// Edges lists the edges with a retry policy or circuit breaker.
-	Edges       []string        `json:"edges,omitempty"`
+	Edges []string `json:"edges,omitempty"`
+	// Hosts is the Deployment or VM group each service runs on, parallel to
+	// Services ("" for a service without one).
+	Hosts []string `json:"hosts"`
+	// Calls lists every edge, parallel to Tick.Calls.
+	Calls       []string        `json:"calls"`
 	Failures    []FailureSpan   `json:"failures,omitempty"`
 	Ticks       []Tick          `json:"ticks"`
 	Events      []Event         `json:"events"`
@@ -66,6 +71,7 @@ type Tick struct {
 	Stations []StationTick `json:"stations"`
 	Pools    []PoolTick    `json:"pools,omitempty"`
 	Edges    []EdgeTick    `json:"edges,omitempty"`
+	Calls    []float64     `json:"calls"` // calls/s sent on each edge, retries included
 }
 
 type EdgeTick struct {
@@ -79,7 +85,11 @@ type EdgeTick struct {
 
 type ReplicaTick struct {
 	Desired int `json:"desired"`
-	Ready   int `json:"ready"`
+	Ready   int `json:"ready"` // running and passing the readiness probe
+	// NotReady are running but failing the readiness probe (no new traffic).
+	NotReady int `json:"notReady"`
+	Starting int `json:"starting"`
+	Pending  int `json:"pending"` // no room on the node pool
 }
 
 type StationTick struct {
@@ -305,6 +315,11 @@ func (g *graph) newSimState(w model.Workload) *simState {
 		}
 		s.hosts = append(s.hosts, hs)
 		s.out.Services = append(s.out.Services, h.svc.m.ID)
+		host := ""
+		if h.host != nil {
+			host = h.host.m.ID
+		}
+		s.out.Hosts = append(s.out.Hosts, host)
 	}
 	for _, p := range g.pools {
 		ps := &poolState{p: p, ready: p.nodesNeeded, provisionS: g.nonNeg(p.n, "provisionS"),
@@ -338,6 +353,7 @@ func (g *graph) newSimState(w model.Workload) *simState {
 		}
 	}
 	for _, e := range g.edges {
+		s.out.Calls = append(s.out.Calls, e.id)
 		if e.async || (e.retry == nil && e.breaker == nil) {
 			continue
 		}
@@ -976,11 +992,11 @@ func (s *simState) hpaRecommend(hs *hostState, i int, t float64) (ratio float64,
 
 func (s *simState) record(tick *Tick) {
 	for _, hs := range s.hosts {
-		ready := hs.ready
-		if hs.notReady { // running, but failing the readiness probe
-			ready = 0
+		rt := ReplicaTick{Desired: hs.desired, Ready: hs.ready, Starting: len(hs.starting), Pending: hs.pending}
+		if hs.notReady {
+			rt.Ready, rt.NotReady = 0, hs.ready
 		}
-		tick.Replicas = append(tick.Replicas, ReplicaTick{Desired: hs.desired, Ready: ready})
+		tick.Replicas = append(tick.Replicas, rt)
 	}
 	for k, st := range s.stations {
 		backlog := 0.0
@@ -1003,6 +1019,12 @@ func (s *simState) record(tick *Tick) {
 	}
 	for _, ps := range s.pools {
 		tick.Pools = append(tick.Pools, PoolTick{Ready: ps.ready, Provisioning: len(ps.provisioning)})
+	}
+	tick.Calls = make([]float64, len(s.g.edges))
+	for _, e := range s.g.edges {
+		for _, v := range s.sites[e.idx] {
+			tick.Calls[e.idx] += s.attempts[v.idx]
+		}
 	}
 	for _, e := range s.resEdges {
 		var et EdgeTick

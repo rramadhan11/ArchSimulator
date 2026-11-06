@@ -126,6 +126,20 @@ func TestTimelineSpikeScalesOut(t *testing.T) {
 	if r := out.Ticks[141].Replicas[0].Ready; r != 2 {
 		t.Errorf("t=141: ready = %d, want 2 (20 s pod startup after the node)", r)
 	}
+	// What the canvas plays back: the pod states and the calls on each edge.
+	for i, want := range map[int]ReplicaTick{
+		60:  {Desired: 2, Ready: 1, Pending: 1},
+		130: {Desired: 2, Ready: 1, Starting: 1},
+	} {
+		if got := out.Ticks[i].Replicas[0]; got != want {
+			t.Errorf("t=%d: replicas = %+v, want %+v", i, got, want)
+		}
+	}
+	if !reflect.DeepEqual(out.Hosts, []string{"deploy"}) || !reflect.DeepEqual(out.Calls, []string{"c->svc"}) {
+		t.Errorf("hosts = %v, calls = %v; want [deploy], [c->svc]", out.Hosts, out.Calls)
+	}
+	within(t, "calls/s before the spike", out.Ticks[0].Calls[0], 40, 1e-9)
+	within(t, "calls/s during the spike", out.Ticks[60].Calls[0], 250, 1e-9)
 
 	// The 30 s queue timeout caps the backlog at 30 s of capacity: 3000
 	// visits with one pod, 6000 with two. It first overflows at t=30, when

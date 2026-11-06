@@ -16,6 +16,7 @@ import { archetypeOf, isCallable, type FlowEdge, type FlowNode } from '../store/
 import { archetypeMeta } from './archetypes'
 import { edgeTypes } from './edges'
 import { nodeTypes } from './nodes'
+import { PlaybackBar } from './PlaybackBar'
 
 export const DRAG_MIME = 'application/x-archsim-kind'
 
@@ -137,6 +138,7 @@ export function Canvas() {
     >
       <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} color="var(--canvas-dot)" />
       <Controls showInteractive={false} position="bottom-left" />
+      <PlaybackBar />
       <MiniMap
         pannable
         zoomable
